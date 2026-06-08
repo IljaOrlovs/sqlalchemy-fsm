@@ -5,21 +5,28 @@ attribute on a mapped instance — so the runtime is async-safe out of
 the box. These tests pin that behaviour: state changes, persistence,
 events, conditions, and permissions all need to work end-to-end through
 an async engine.
+
+The whole module skips on SQLAlchemy 1.4 — `async_sessionmaker` was
+added in 2.0.
 """
 
 import pytest
-import pytest_asyncio
-import sqlalchemy
-from sqlalchemy.event import listens_for, remove
-from sqlalchemy.ext.asyncio import (
+
+sqlalchemy = pytest.importorskip("sqlalchemy")
+if sqlalchemy.__version__.startswith("1."):  # pragma: no cover
+    pytest.skip("AsyncSession tests require SQLAlchemy 2.x", allow_module_level=True)
+
+import pytest_asyncio  # noqa: E402
+from sqlalchemy.event import listens_for, remove  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import declarative_base  # noqa: E402
 
-from sqlalchemy_fsm import FSMField, transition
-from sqlalchemy_fsm.exc import (
+from sqlalchemy_fsm import FSMField, transition  # noqa: E402
+from sqlalchemy_fsm.exc import (  # noqa: E402
     InvalidSourceStateError,
     PermissionDeniedError,
 )
