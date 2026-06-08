@@ -37,6 +37,7 @@ dev = [
     "pytest-benchmark>=4.0",
     "ruff>=0.8",
     "pyright>=1.1.409",
+    "hypothesis>=6.100",
 ]
 
 [build-system]
