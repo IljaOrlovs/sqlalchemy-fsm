@@ -34,12 +34,15 @@ from sqlalchemy_fsm.exc import (
     SetupError,
 )
 from sqlalchemy_fsm.extras import alembic as _alembic_extras
-from sqlalchemy_fsm.introspection import TransitionEdge, _edges_from_class_group, _edges_from_meta
+from sqlalchemy_fsm.introspection import (
+    TransitionEdge,
+    _edges_from_class_group,
+    _edges_from_meta,
+)
 from sqlalchemy_fsm.meta import FSMMeta
 from sqlalchemy_fsm.transition import sql_equality_cache
 
 from .conftest import Base
-
 
 # --- bound: signature memoization edge cases -------------------------------
 
@@ -94,14 +97,16 @@ class _MinimalRecord:
 
 
 def _make_base() -> _bound.BoundFSMBase:
-    meta = FSMMeta("*", "b", (), (), _bound.BoundFSMFunction)
     # Construct a bare base without going through SA — we just need the
     # abstract methods to fire NotImplementedError.
     return _bound.BoundFSMBase.__new__(_bound.BoundFSMBase)
 
 
+_ABSTRACT_METHODS = ["conditions_met", "permissions_met", "to_next_state"]
+
+
 class TestBoundFSMBaseAbstract:
-    @pytest.mark.parametrize("method", ["conditions_met", "permissions_met", "to_next_state"])
+    @pytest.mark.parametrize("method", _ABSTRACT_METHODS)
     def test_abstract_methods_raise(self, method):
         base = _make_base()
         with pytest.raises(NotImplementedError):

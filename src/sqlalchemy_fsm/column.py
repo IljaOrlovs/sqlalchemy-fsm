@@ -17,7 +17,6 @@ runtime.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, ClassVar, overload
 
 import sqlalchemy as sa
@@ -26,6 +25,8 @@ from . import exc
 from .sqltypes import FSMField
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
     from .transition import (
         AsyncFsmTransition,
         FsmTransition,
@@ -48,7 +49,7 @@ class FSMColumn(sa.Column):
     """
 
     _allowed_states: ClassVar[frozenset[str] | None] = None
-    _subscript_cache: ClassVar[dict[tuple[str, ...], type["FSMColumn"]]] = {}
+    _subscript_cache: ClassVar[dict[tuple[str, ...], type[FSMColumn]]] = {}
 
     inherit_cache = True
 
@@ -59,13 +60,13 @@ class FSMColumn(sa.Column):
         # `FSMColumn` itself so `@state.transition(...)` keeps type-
         # checking. Mirrors the trick SA's own stubs use for `Mapped[T]`.
         @overload
-        def __get__(self, instance: None, owner: Any) -> "FSMColumn": ...
+        def __get__(self, instance: None, owner: Any) -> FSMColumn: ...
         @overload
         def __get__(self, instance: object, owner: Any) -> str: ...
-        def __get__(self, instance: Any, owner: Any) -> "FSMColumn | str": ...
+        def __get__(self, instance: Any, owner: Any) -> FSMColumn | str: ...
         def __set__(self, instance: object, value: str) -> None: ...
 
-    def __class_getitem__(cls, item: object) -> type["FSMColumn"]:
+    def __class_getitem__(cls, item: object) -> type[FSMColumn]:
         if isinstance(item, str):
             states: tuple[str, ...] = (item,)
         elif isinstance(item, tuple):
@@ -111,11 +112,11 @@ class FSMColumn(sa.Column):
 
     def transition(
         self,
-        source: "SourceState" = "*",
+        source: SourceState = "*",
         target: str | None = None,
         conditions: Iterable[Callable[..., Any]] = (),
         permissions: Iterable[Callable[..., Any]] = (),
-    ) -> Callable[[Any], "SyncFsmTransition"]:
+    ) -> Callable[[Any], SyncFsmTransition]:
         """Like the module-level `@transition`, but scoped to this column.
 
         Validates `source`/`target` state names against this column's
@@ -127,29 +128,29 @@ class FSMColumn(sa.Column):
 
     def async_transition(
         self,
-        source: "SourceState" = "*",
+        source: SourceState = "*",
         target: str | None = None,
         conditions: Iterable[Callable[..., Any]] = (),
         permissions: Iterable[Callable[..., Any]] = (),
-    ) -> Callable[[Any], "AsyncFsmTransition"]:
+    ) -> Callable[[Any], AsyncFsmTransition]:
         """Async sibling of `.transition`. See `sqlalchemy_fsm.async_transition`."""
         return self._make_decorator(True, source, target, conditions, permissions)  # type: ignore[return-value]
 
     def _make_decorator(
         self,
         is_async: bool,
-        source: "SourceState",
+        source: SourceState,
         target: str | None,
         conditions: Iterable[Callable[..., Any]],
         permissions: Iterable[Callable[..., Any]],
-    ) -> Callable[[Any], "FsmTransition"]:
+    ) -> Callable[[Any], FsmTransition]:
         from .transition import _make_transition  # local import to avoid cycle
 
         self._validate_states(source, target)
         inner = _make_transition(is_async, source, target, conditions, permissions)
         column_ref = self
 
-        def wrapper(subject: Any) -> "FsmTransition":
+        def wrapper(subject: Any) -> FsmTransition:
             fsm_t = inner(subject)
             fsm_t.column_ref = column_ref
             return fsm_t

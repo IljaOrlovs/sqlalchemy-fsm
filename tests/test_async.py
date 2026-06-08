@@ -10,6 +10,8 @@ The whole module skips on SQLAlchemy 1.4 — `async_sessionmaker` was
 added in 2.0.
 """
 
+from typing import ClassVar
+
 import pytest
 
 sqlalchemy = pytest.importorskip("sqlalchemy")
@@ -177,7 +179,7 @@ class AsyncHandlerDoc(AsyncBase):
     __tablename__ = "AsyncHandlerDoc"
     id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
     state = sqlalchemy.Column(FSMField)
-    side_effect: list = []
+    side_effect: ClassVar[list] = []
 
     def __init__(self, *a, **kw):
         self.state = "draft"
@@ -312,22 +314,21 @@ class TestAsyncTransitionGuards:
 
 class TestAsyncClassTransitionMixingForbidden:
     def test_mixing_sync_and_async_subhandlers_errors(self):
+        class _Bad(AsyncBase):
+            __tablename__ = "AsyncMixedDoc"
+            id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+            state = sqlalchemy.Column(FSMField)
+
+            def __init__(self, *a, **kw):
+                self.state = "draft"
+                super().__init__(*a, **kw)
+
+            @async_transition(source="*", target="done")
+            class go:  # noqa: N801
+                @transition(source="draft")  # sync sub under async parent
+                def from_draft(self):
+                    pass
+
         with pytest.raises(SetupError):
-
-            class _Bad(AsyncBase):
-                __tablename__ = "AsyncMixedDoc"
-                id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
-                state = sqlalchemy.Column(FSMField)
-
-                def __init__(self, *a, **kw):
-                    self.state = "draft"
-                    super().__init__(*a, **kw)
-
-                @async_transition(source="*", target="done")
-                class go:  # noqa: N801
-                    @transition(source="draft")  # sync sub under async parent
-                    def from_draft(self):
-                        pass
-
             # Touching the descriptor triggers the merge.
-            _Bad().go.acan_proceed
+            _ = _Bad().go.acan_proceed

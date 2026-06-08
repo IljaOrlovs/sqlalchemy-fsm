@@ -207,7 +207,7 @@ class FsmTransition(InspectionAttrInfo):
         # `@transition`, which resolves to the model's single FSM column.
         self.column_ref = column_ref
 
-    def __get__(
+    def __get__(  # noqa: E501
         self, instance: Any, owner: type
     ) -> "ClassBoundFsmTransition | InstanceBoundFsmTransition | AsyncInstanceBoundFsmTransition":
         try:

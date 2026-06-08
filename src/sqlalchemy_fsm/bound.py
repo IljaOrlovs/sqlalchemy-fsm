@@ -524,7 +524,7 @@ class AsyncBoundFSMClass(BoundFSMClass):
         """
         from typing import cast
 
-        return cast(list["AsyncBoundFSMFunction"], self._applicable_subs())
+        return cast("list[AsyncBoundFSMFunction]", self._applicable_subs())
 
     async def aconditions_met(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
@@ -545,12 +545,12 @@ class AsyncBoundFSMClass(BoundFSMClass):
     async def ato_next_state(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
     ) -> None:
-        accepted: list[AsyncBoundFSMFunction] = []
-        for sub in self._applicable_async_subs():
-            if await sub.apermissions_met(args, kwargs) and await sub.aconditions_met(
-                args, kwargs
-            ):
-                accepted.append(sub)
+        accepted: list[AsyncBoundFSMFunction] = [
+            sub
+            for sub in self._applicable_async_subs()
+            if await sub.apermissions_met(args, kwargs)
+            and await sub.aconditions_met(args, kwargs)
+        ]
         if len(accepted) > 1:
             raise exc.SetupError(
                 f"Can transition with multiple handlers ({accepted})"

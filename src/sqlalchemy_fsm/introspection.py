@@ -58,9 +58,12 @@ def iter_transitions(
         for klass in model_cls.__mro__:
             if name in klass.__dict__:
                 attr = klass.__dict__[name]
-                if isinstance(attr, FsmTransition):
-                    if column is None or attr.column_ref is None or attr.column_ref is column:
-                        out.append((name, attr))
+                if isinstance(attr, FsmTransition) and (
+                    column is None
+                    or attr.column_ref is None
+                    or attr.column_ref is column
+                ):
+                    out.append((name, attr))
                 break
     return out
 
@@ -93,7 +96,7 @@ def collect_transition_states(model_cls: type, column: Any = None) -> set[str]:
         states |= _concrete_states_from_meta(meta)
         if _is_class_group(meta, fsm_t.set_fn):
             # `_is_class_group` already confirmed `set_fn` is a class.
-            for _, sub in iter_transitions(cast(type, fsm_t.set_fn)):
+            for _, sub in iter_transitions(cast("type", fsm_t.set_fn)):
                 states |= _concrete_states_from_meta(sub.meta)
     return states
 
@@ -111,7 +114,7 @@ def collect_edges(model_cls: type, column: Any = None) -> list[TransitionEdge]:
     for name, fsm_t in iter_transitions(model_cls, column=column):
         meta = fsm_t.meta
         if _is_class_group(meta, fsm_t.set_fn):
-            edges.extend(_edges_from_class_group(name, meta, cast(type, fsm_t.set_fn)))
+            edges.extend(_edges_from_class_group(name, meta, cast("type", fsm_t.set_fn)))
         else:
             edges.extend(_edges_from_meta(name, meta))
     edges.sort(key=lambda e: (e.label, e.source or "", e.target))
