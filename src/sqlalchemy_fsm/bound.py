@@ -19,9 +19,11 @@ def column_cache(table_class: type) -> Any:
     ]
 
     if len(fsm_fields) == 0:
-        raise exc.SetupError("No FSMField found in model")
+        raise exc.NoFSMColumnError("No FSMField found in model")
     if len(fsm_fields) > 1:
-        raise exc.SetupError(f"More than one FSMField found in model ({fsm_fields})")
+        raise exc.MultipleFSMColumnsError(
+            f"More than one FSMField found in model ({fsm_fields})"
+        )
     return fsm_fields[0]
 
 
@@ -38,6 +40,46 @@ class SqlAlchemyHandle:
         self.column_name = self.fsm_column.name
         if self.record:
             self.dispatch = events.BoundFSMDispatcher(self.record)
+
+
+# --- callable-signature memoization ----------------------------------------
+#
+# `inspect.getcallargs` was previously called on the hot path for every
+# condition/permission/handler check. Building the Signature dominates the
+# benchmark. We cache the Signature per-callable and use `.bind()` instead.
+
+_SIGNATURE_CACHE: dict[Callable[..., Any], py_inspect.Signature | None] = {}
+
+
+def _signature_for(fn: Callable[..., Any]) -> py_inspect.Signature | None:
+    """Cached `inspect.signature(fn)`. `None` means signature is unknowable
+    (e.g. built-in with no introspectable params) — we skip the bind check
+    in that case and let the call itself raise."""
+    try:
+        return _SIGNATURE_CACHE[fn]
+    except KeyError:
+        try:
+            sig: py_inspect.Signature | None = py_inspect.signature(fn)
+        except (ValueError, TypeError):
+            sig = None
+        _SIGNATURE_CACHE[fn] = sig
+        return sig
+
+
+def _call_iface_error(
+    fn: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: Mapping[str, Any],
+) -> TypeError | None:
+    """`None` if `fn(*args, **kwargs)` would bind cleanly; else the `TypeError`."""
+    sig = _signature_for(fn)
+    if sig is None:
+        return None
+    try:
+        sig.bind(*args, **kwargs)
+    except TypeError as err:
+        return err
+    return None
 
 
 class BoundFSMBase:
@@ -90,80 +132,85 @@ class BoundFSMFunction(BoundFSMBase):
             self.meta.extra_call_args + self.extra_call_args + (self.sqla_handle.record,)
         )
 
+    # Back-compat for callers (e.g. subclasses or tests) that referenced the
+    # old method name. New code should use the module-level `_call_iface_error`.
     def get_call_iface_error(
         self,
         fn: Callable[..., Any],
         args: Iterable[Any],
         kwargs: Mapping[str, Any],
     ) -> TypeError | None:
-        """`None` if `fn(*args, **kwargs)` would bind cleanly; else the `TypeError`."""
-        try:
-            py_inspect.getcallargs(fn, *args, **kwargs)
-        except TypeError as err:
-            return err
-        return None
+        return _call_iface_error(fn, tuple(args), kwargs)
+
+    def _merged_args(self, args: Iterable[Any]) -> tuple[Any, ...]:
+        return self.my_args if not args else self.my_args + tuple(args)
 
     def _eval_callables(
         self,
         callables: tuple[Callable[..., Any], ...],
-        args: Iterable[Any],
+        args: tuple[Any, ...],
         kwargs: Mapping[str, Any],
     ) -> bool:
-        """Run each callable with the merged args; short-circuit on first falsy."""
-        if not callables:
-            return True
+        """Run each callable with the merged args; short-circuit on first falsy.
+
+        A callable that can't be bound with these args raises a warning and
+        causes the check to return False — same outcome the callable would
+        get if invoked with mismatched args, but with a helpful warning.
+        """
         for fn in callables:
-            if self.get_call_iface_error(fn, args, kwargs):
+            err = _call_iface_error(fn, args, kwargs)
+            if err is not None:
+                warnings.warn(
+                    f"Callable {fn!r} cannot be invoked with these args: {err}",
+                    stacklevel=2,
+                )
                 return False
             if not fn(*args, **kwargs):
                 return False
         return True
 
+    def _validate_handler_iface(
+        self, merged_args: tuple[Any, ...], merged_kwargs: Mapping[str, Any]
+    ) -> None:
+        """Raise SetupError if conditions accept these args but the handler
+        wouldn't — otherwise `set()` would pass conditions and then crash
+        inside the handler."""
+        err = _call_iface_error(self.set_func, merged_args, merged_kwargs)
+        if err is None:
+            return
+        warnings.warn(
+            f"Failure to validate handler call args: {err}",
+            stacklevel=2,
+        )
+        raise exc.SetupError(
+            "Mismatch between args accepted by preconditions "
+            f"({self.meta.conditions!r}) & handler ({self.set_func!r})"
+        )
+
     def conditions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
         conditions = self.meta.conditions
         if not conditions:
             return True
-
-        merged_args = self.my_args + tuple(args)
-        merged_kwargs = dict(kwargs)
-
-        out = self._eval_callables(conditions, merged_args, merged_kwargs)
-
-        if out:
-            # If conditions accept these args, the handler must too — otherwise
-            # set() would pass conditions and then crash inside the handler.
-            err = self.get_call_iface_error(self.set_func, merged_args, merged_kwargs)
-            if err:
-                warnings.warn(
-                    f"Failure to validate handler call args: {err}",
-                    stacklevel=2,
-                )
-                out = False
-                if conditions:
-                    raise exc.SetupError(
-                        "Mismatch between args accepted by preconditions "
-                        f"({self.meta.conditions!r}) & handler ({self.set_func!r})"
-                    )
-        return out
+        merged_args = self._merged_args(args)
+        if not self._eval_callables(conditions, merged_args, kwargs):
+            return False
+        self._validate_handler_iface(merged_args, kwargs)
+        return True
 
     def permissions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
         permissions = self.meta.permissions
         if not permissions:
             return True
-        merged_args = self.my_args + tuple(args)
-        return self._eval_callables(permissions, merged_args, dict(kwargs))
+        return self._eval_callables(permissions, self._merged_args(args), kwargs)
 
     def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
         old_state = self.current_state
         new_state = self.target_state
-
         sqla_target = self.sqla_handle.record
-
-        args = self.my_args + tuple(args)
+        merged = self._merged_args(args)
 
         self.sqla_handle.dispatch.before_state_change(source=old_state, target=new_state)
-
-        self.set_func(*args, **kwargs)
+        self.set_func(*merged, **kwargs)
         setattr(sqla_target, self.sqla_handle.column_name, new_state)
         self.sqla_handle.dispatch.after_state_change(source=old_state, target=new_state)
 
@@ -182,13 +229,16 @@ class AsyncBoundFSMFunction(BoundFSMFunction):
     async def _aeval_callables(
         self,
         callables: tuple[Callable[..., Any], ...],
-        args: Iterable[Any],
+        args: tuple[Any, ...],
         kwargs: Mapping[str, Any],
     ) -> bool:
-        if not callables:
-            return True
         for fn in callables:
-            if self.get_call_iface_error(fn, args, kwargs):
+            err = _call_iface_error(fn, args, kwargs)
+            if err is not None:
+                warnings.warn(
+                    f"Callable {fn!r} cannot be invoked with these args: {err}",
+                    stacklevel=2,
+                )
                 return False
             result = fn(*args, **kwargs)
             if py_inspect.iscoroutine(result):
@@ -203,24 +253,11 @@ class AsyncBoundFSMFunction(BoundFSMFunction):
         conditions = self.meta.conditions
         if not conditions:
             return True
-
-        merged_args = self.my_args + tuple(args)
-        merged_kwargs = dict(kwargs)
-
-        out = await self._aeval_callables(conditions, merged_args, merged_kwargs)
-
-        if out:
-            err = self.get_call_iface_error(self.set_func, merged_args, merged_kwargs)
-            if err:
-                warnings.warn(
-                    f"Failure to validate handler call args: {err}",
-                    stacklevel=2,
-                )
-                raise exc.SetupError(
-                    "Mismatch between args accepted by preconditions "
-                    f"({self.meta.conditions!r}) & handler ({self.set_func!r})"
-                )
-        return out
+        merged_args = self._merged_args(args)
+        if not await self._aeval_callables(conditions, merged_args, kwargs):
+            return False
+        self._validate_handler_iface(merged_args, kwargs)
+        return True
 
     async def apermissions_met(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
@@ -228,21 +265,18 @@ class AsyncBoundFSMFunction(BoundFSMFunction):
         permissions = self.meta.permissions
         if not permissions:
             return True
-        merged_args = self.my_args + tuple(args)
-        return await self._aeval_callables(permissions, merged_args, dict(kwargs))
+        return await self._aeval_callables(permissions, self._merged_args(args), kwargs)
 
     async def ato_next_state(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
     ) -> None:
         old_state = self.current_state
         new_state = self.target_state
-
         sqla_target = self.sqla_handle.record
-        args = self.my_args + tuple(args)
+        merged = self._merged_args(args)
 
         self.sqla_handle.dispatch.before_state_change(source=old_state, target=new_state)
-
-        result = self.set_func(*args, **kwargs)
+        result = self.set_func(*merged, **kwargs)
         if py_inspect.iscoroutine(result):
             await result
         setattr(sqla_target, self.sqla_handle.column_name, new_state)
@@ -405,40 +439,38 @@ class BoundFSMClass(BoundFSMBase):
             self._target_cached = targets[0]
         return self._target_cached
 
+    def _applicable_subs(self) -> list[BoundFSMBase]:
+        """Sub-handlers whose source state matches the current state. Cached
+        per call site to avoid re-walking `current_state` in the inner loops."""
+        return [sub for sub in self.bound_sub_metas if sub.transition_possible()]
+
     def transition_possible(self) -> bool:
         return any(sub.transition_possible() for sub in self.bound_sub_metas)
 
     def conditions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
-        return any(
-            sub.transition_possible() and sub.conditions_met(args, kwargs)
-            for sub in self.bound_sub_metas
-        )
+        return any(sub.conditions_met(args, kwargs) for sub in self._applicable_subs())
 
     def permissions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
         # A class-based transition is allowed if any applicable sub-handler
         # accepts the caller — mirrors the dispatch in to_next_state().
-        return any(
-            sub.transition_possible() and sub.permissions_met(args, kwargs)
-            for sub in self.bound_sub_metas
-        )
+        return any(sub.permissions_met(args, kwargs) for sub in self._applicable_subs())
 
     def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
-        can_transition_with = [
+        applicable = self._applicable_subs()
+        accepted = [
             sub
-            for sub in self.bound_sub_metas
-            if sub.transition_possible()
-            and sub.permissions_met(args, kwargs)
-            and sub.conditions_met(args, kwargs)
+            for sub in applicable
+            if sub.permissions_met(args, kwargs) and sub.conditions_met(args, kwargs)
         ]
-        if len(can_transition_with) > 1:
+        if len(accepted) > 1:
             raise exc.SetupError(
-                f"Can transition with multiple handlers ({can_transition_with})"
+                f"Can transition with multiple handlers ({accepted})"
             )
-        if not can_transition_with:
+        if not accepted:
             raise exc.InvalidSourceStateError(
                 "No sub-transition is currently applicable."
             )
-        return can_transition_with[0].to_next_state(args, kwargs)
+        return accepted[0].to_next_state(args, kwargs)
 
 
 class AsyncBoundFSMClass(BoundFSMClass):
@@ -449,36 +481,34 @@ class AsyncBoundFSMClass(BoundFSMClass):
     async def aconditions_met(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
     ) -> bool:
-        for sub in self.bound_sub_metas:
-            if sub.transition_possible() and await sub.aconditions_met(args, kwargs):
+        for sub in self._applicable_subs():
+            if await sub.aconditions_met(args, kwargs):
                 return True
         return False
 
     async def apermissions_met(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
     ) -> bool:
-        for sub in self.bound_sub_metas:
-            if sub.transition_possible() and await sub.apermissions_met(args, kwargs):
+        for sub in self._applicable_subs():
+            if await sub.apermissions_met(args, kwargs):
                 return True
         return False
 
     async def ato_next_state(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
     ) -> None:
-        applicable: list[AsyncBoundFSMFunction] = []
-        for sub in self.bound_sub_metas:
-            if (
-                sub.transition_possible()
-                and await sub.apermissions_met(args, kwargs)
-                and await sub.aconditions_met(args, kwargs)
+        accepted: list[AsyncBoundFSMFunction] = []
+        for sub in self._applicable_subs():
+            if await sub.apermissions_met(args, kwargs) and await sub.aconditions_met(
+                args, kwargs
             ):
-                applicable.append(sub)
-        if len(applicable) > 1:
+                accepted.append(sub)
+        if len(accepted) > 1:
             raise exc.SetupError(
-                f"Can transition with multiple handlers ({applicable})"
+                f"Can transition with multiple handlers ({accepted})"
             )
-        if not applicable:
+        if not accepted:
             raise exc.InvalidSourceStateError(
                 "No sub-transition is currently applicable."
             )
-        return await applicable[0].ato_next_state(args, kwargs)
+        return await accepted[0].ato_next_state(args, kwargs)

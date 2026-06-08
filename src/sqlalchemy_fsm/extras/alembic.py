@@ -45,9 +45,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import CheckConstraint
 from sqlalchemy import inspect as sqla_inspect
 
-from .. import bound as _bound
+from ..introspection import collect_transition_states
 from ..sqltypes import FSMField
-from ..transition import FsmTransition
 
 if TYPE_CHECKING:
     from sqlalchemy import Table
@@ -76,30 +75,6 @@ def _require_alembic() -> None:
 # --- core state extraction --------------------------------------------------
 
 
-def _iter_transitions(model_cls: type) -> list[tuple[str, FsmTransition]]:
-    out: list[tuple[str, FsmTransition]] = []
-    for name in dir(model_cls):
-        for klass in model_cls.__mro__:
-            if name in klass.__dict__:
-                attr = klass.__dict__[name]
-                if isinstance(attr, FsmTransition):
-                    out.append((name, attr))
-                break
-    return out
-
-
-def _states_from_meta(meta: Any) -> set[str]:
-    """Collect concrete (non-wildcard, non-null) states from one `FSMMeta`."""
-    states: set[str] = set()
-    if meta.target is not None:
-        states.add(meta.target)
-    for src in meta.sources:
-        if src is None or src == "*":
-            continue
-        states.add(src)
-    return states
-
-
 def collect_states(model_cls: type) -> set[str]:
     """Return the closed set of legal states declared by a model's transitions.
 
@@ -108,14 +83,7 @@ def collect_states(model_cls: type) -> set[str]:
     states. Wildcards (`"*"`) and `None` sources are excluded — they aren't
     constants you can pin in a CHECK constraint.
     """
-    states: set[str] = set()
-    for _, fsm_t in _iter_transitions(model_cls):
-        meta = fsm_t.meta
-        states |= _states_from_meta(meta)
-        if meta.bound_cls is _bound.BoundFSMClass and isinstance(fsm_t.set_fn, type):
-            for _, sub in _iter_transitions(fsm_t.set_fn):
-                states |= _states_from_meta(sub.meta)
-    return states
+    return collect_transition_states(model_cls)
 
 
 def _fsm_column_name(model_cls: type) -> str:

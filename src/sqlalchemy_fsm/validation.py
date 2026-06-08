@@ -17,6 +17,7 @@ for reachability — they edge from every allowed state to their target.
 
 from __future__ import annotations
 
+import inspect as py_inspect
 from typing import TYPE_CHECKING
 
 import sqlalchemy.orm
@@ -31,10 +32,14 @@ if TYPE_CHECKING:
 
 
 def _fsm_column(model_cls: type) -> Column | None:
-    """The model's FSM-managed column, or `None` if it has none."""
+    """The model's FSM-managed column, or `None` if it has none.
+
+    Re-raises `MultipleFSMColumnsError` — that's a misconfiguration that
+    should fail at mapper-config time, not be silently skipped.
+    """
     try:
         return bound.column_cache.get_value(model_cls)
-    except exc.SetupError:
+    except exc.NoFSMColumnError:
         return None
 
 
@@ -45,12 +50,46 @@ def _declared_states(column: Column) -> frozenset[str] | None:
 
 
 def _initial_state(column: Column) -> str | None:
-    """The column's scalar `default=` if it can be statically determined."""
+    """The column's `default=` if it can be statically determined.
+
+    Handles three common forms:
+    - scalar string default: `default="draft"`
+    - callable default that takes no args and returns a string: `default=lambda: "draft"`
+    - enum value with a `.value` of type `str`
+
+    Returns `None` if we can't pin down the default; the validator then
+    surfaces a clear error instead of silently using the wrong start state.
+    """
     default = column.default
     if default is None:
         return None
     arg = getattr(default, "arg", None)
-    return arg if isinstance(arg, str) else None
+    if isinstance(arg, str):
+        return arg
+    # Enum-like default (e.g. `default=Status.DRAFT`)
+    enum_value = getattr(arg, "value", None)
+    if isinstance(enum_value, str):
+        return enum_value
+    # Zero-arg callable default (`default=lambda: "draft"`). Only call if it
+    # takes no parameters — SA passes a context to callables that accept one,
+    # and we don't have one here.
+    if callable(arg):
+        try:
+            sig = py_inspect.signature(arg)
+        except (TypeError, ValueError):
+            return None
+        if not any(
+            p.kind
+            in (py_inspect.Parameter.POSITIONAL_ONLY, py_inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            and p.default is py_inspect.Parameter.empty
+            for p in sig.parameters.values()
+        ):
+            try:
+                result = arg()
+            except Exception:
+                return None
+            return result if isinstance(result, str) else None
+    return None
 
 
 def _reachable_from(start: str, edges, allowed: frozenset[str]) -> set[str]:

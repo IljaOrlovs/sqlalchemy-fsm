@@ -26,9 +26,23 @@ class TransitionEdge:
     target: str
     label: str
 
+    @property
+    def display_source(self) -> str:
+        """Render-friendly source label: wildcard `"*"` becomes `"(any)"`,
+        `None` becomes `"(none)"`. Used by the graph renderers."""
+        if self.source == "*":
+            return "(any)"
+        if self.source is None:
+            return "(none)"
+        return self.source
+
 
 def iter_transitions(model_cls: type) -> list[tuple[str, FsmTransition]]:
-    """Yield (attribute name, descriptor) for every `@transition` on `cls`."""
+    """Yield (attribute name, descriptor) for every `@transition` on `cls`.
+
+    Walks the MRO without triggering descriptor `__get__`, so we see the
+    `FsmTransition` itself rather than a bound wrapper. Each name appears
+    at most once (overrides win)."""
     out: list[tuple[str, FsmTransition]] = []
     seen: set[str] = set()
     for name in dir(model_cls):
@@ -42,6 +56,11 @@ def iter_transitions(model_cls: type) -> list[tuple[str, FsmTransition]]:
                     seen.add(name)
                 break
     return out
+
+
+def _is_class_group(meta: FSMMeta, set_fn: object) -> bool:
+    """True if this transition wraps a class of sub-handlers (sync or async)."""
+    return issubclass(meta.bound_cls, _bound.BoundFSMClass) and isinstance(set_fn, type)
 
 
 def _concrete_states_from_meta(meta: FSMMeta) -> set[str]:
@@ -62,7 +81,7 @@ def collect_transition_states(model_cls: type) -> set[str]:
     for _, fsm_t in iter_transitions(model_cls):
         meta = fsm_t.meta
         states |= _concrete_states_from_meta(meta)
-        if issubclass(meta.bound_cls, _bound.BoundFSMClass) and isinstance(fsm_t.set_fn, type):
+        if _is_class_group(meta, fsm_t.set_fn):
             for _, sub in iter_transitions(fsm_t.set_fn):
                 states |= _concrete_states_from_meta(sub.meta)
     return states
@@ -78,7 +97,7 @@ def collect_edges(model_cls: type) -> list[TransitionEdge]:
     edges: list[TransitionEdge] = []
     for name, fsm_t in iter_transitions(model_cls):
         meta = fsm_t.meta
-        if issubclass(meta.bound_cls, _bound.BoundFSMClass) and isinstance(fsm_t.set_fn, type):
+        if _is_class_group(meta, fsm_t.set_fn):
             edges.extend(_edges_from_class_group(name, meta, fsm_t.set_fn))
         else:
             edges.extend(_edges_from_meta(name, meta))

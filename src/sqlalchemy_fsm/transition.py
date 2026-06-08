@@ -68,8 +68,17 @@ class ClassBoundFsmTransition:
         return False
 
 
-class InstanceBoundFsmTransition:
-    __slots__ = (*ClassBoundFsmTransition.__slots__, "_sa_fsm_self", "_sa_fsm_bound_meta")
+class _InstanceBoundBase:
+    """Shared state + `__call__` for sync and async instance descriptors."""
+
+    __slots__ = (
+        "_sa_fsm_bound_meta",
+        "_sa_fsm_meta",
+        "_sa_fsm_owner_cls",
+        "_sa_fsm_self",
+        "_sa_fsm_sqla_handle",
+        "_sa_fsm_transition_fn",
+    )
 
     def __init__(
         self,
@@ -83,12 +92,17 @@ class InstanceBoundFsmTransition:
         self._sa_fsm_transition_fn = transition_fn
         self._sa_fsm_owner_cls = owner_cls
         self._sa_fsm_self = instance
+        self._sa_fsm_sqla_handle = sqla_handle
         self._sa_fsm_bound_meta = meta.get_bound(sqla_handle, transition_fn, ())
 
     def __call__(self) -> bool:
         """True if this instance is currently in the transition's target state."""
         bound_meta = self._sa_fsm_bound_meta
         return bound_meta.target_state == bound_meta.current_state
+
+
+class InstanceBoundFsmTransition(_InstanceBoundBase):
+    __slots__ = ()
 
     def set(self, *args: Any, **kwargs: Any) -> None:
         """Execute the transition. Raises if the current state, permissions,
@@ -119,37 +133,11 @@ class InstanceBoundFsmTransition:
         )
 
 
-class AsyncInstanceBoundFsmTransition:
+class AsyncInstanceBoundFsmTransition(_InstanceBoundBase):
     """Async sibling of `InstanceBoundFsmTransition`. Exposes only `aset`
     and `acan_proceed` — calling them outside a running event loop raises."""
 
-    __slots__ = (
-        "_sa_fsm_bound_meta",
-        "_sa_fsm_meta",
-        "_sa_fsm_owner_cls",
-        "_sa_fsm_self",
-        "_sa_fsm_sqla_handle",
-        "_sa_fsm_transition_fn",
-    )
-
-    def __init__(
-        self,
-        meta: FSMMeta,
-        sqla_handle: "bound.SqlAlchemyHandle",
-        transition_fn: Callable[..., Any],
-        owner_cls: type,
-        instance: Any,
-    ) -> None:
-        self._sa_fsm_meta = meta
-        self._sa_fsm_transition_fn = transition_fn
-        self._sa_fsm_owner_cls = owner_cls
-        self._sa_fsm_self = instance
-        self._sa_fsm_sqla_handle = sqla_handle
-        self._sa_fsm_bound_meta = meta.get_bound(sqla_handle, transition_fn, ())
-
-    def __call__(self) -> bool:
-        bound_meta = self._sa_fsm_bound_meta
-        return bound_meta.target_state == bound_meta.current_state
+    __slots__ = ()
 
     @staticmethod
     def _require_running_loop() -> None:
@@ -229,28 +217,38 @@ class FsmTransition(InspectionAttrInfo):
         )
 
 
+def _make_transition(
+    is_async: bool,
+    source: SourceState,
+    target: str | None,
+    conditions: Iterable[Callable[..., Any]],
+    permissions: Iterable[Callable[..., Any]],
+) -> Callable[[Any], FsmTransition]:
+    fn_cls = bound.AsyncBoundFSMFunction if is_async else bound.BoundFSMFunction
+    cls_cls = bound.AsyncBoundFSMClass if is_async else bound.BoundFSMClass
+
+    def inner(subject: Any) -> FsmTransition:
+        if py_inspect.isfunction(subject):
+            bound_cls = fn_cls
+        elif py_inspect.isclass(subject):
+            bound_cls = cls_cls
+        else:
+            raise NotImplementedError(f"Do not know how to {subject!r}")
+        meta = FSMMeta(
+            source, target, conditions, (), bound_cls, permissions, is_async=is_async
+        )
+        return FsmTransition(meta, subject)
+
+    return inner
+
+
 def transition(
     source: SourceState = "*",
     target: str | None = None,
     conditions: Iterable[Callable[..., Any]] = (),
     permissions: Iterable[Callable[..., Any]] = (),
 ) -> Callable[[Any], FsmTransition]:
-    def inner_transition(subject: Any) -> FsmTransition:
-        if py_inspect.isfunction(subject):
-            meta = FSMMeta(
-                source, target, conditions, (), bound.BoundFSMFunction, permissions
-            )
-        elif py_inspect.isclass(subject):
-            # Assume a class with multiple handles for various source states
-            meta = FSMMeta(
-                source, target, conditions, (), bound.BoundFSMClass, permissions
-            )
-        else:
-            raise NotImplementedError(f"Do not know how to {subject!r}")
-
-        return FsmTransition(meta, subject)
-
-    return inner_transition
+    return _make_transition(False, source, target, conditions, permissions)
 
 
 def async_transition(
@@ -262,31 +260,4 @@ def async_transition(
     """Like `@transition`, but the handler — and any conditions/permissions —
     may be `async def`. Invoke via `await instance.<name>.aset(...)`; only
     works inside a running asyncio event loop. Sync callables remain valid."""
-
-    def inner(subject: Any) -> FsmTransition:
-        if py_inspect.isfunction(subject):
-            meta = FSMMeta(
-                source,
-                target,
-                conditions,
-                (),
-                bound.AsyncBoundFSMFunction,
-                permissions,
-                is_async=True,
-            )
-        elif py_inspect.isclass(subject):
-            meta = FSMMeta(
-                source,
-                target,
-                conditions,
-                (),
-                bound.AsyncBoundFSMClass,
-                permissions,
-                is_async=True,
-            )
-        else:
-            raise NotImplementedError(f"Do not know how to {subject!r}")
-
-        return FsmTransition(meta, subject)
-
-    return inner
+    return _make_transition(True, source, target, conditions, permissions)

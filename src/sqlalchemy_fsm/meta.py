@@ -36,6 +36,20 @@ class FSMMeta:
         permissions: Iterable[Callable[..., Any]] = (),
         is_async: bool = False,
     ) -> None:
+        # Async bound classes are gated behind `is_async=True`; pairing a
+        # sync bound class with `is_async=True` (or vice-versa) is a setup
+        # invariant violation that would crash later in dispatch.
+        from . import bound as _bound  # local import to avoid cycle
+
+        bound_is_async = issubclass(
+            bound_cls, (_bound.AsyncBoundFSMFunction, _bound.AsyncBoundFSMClass)
+        )
+        if bound_is_async != is_async:
+            raise ValueError(
+                f"is_async={is_async} but bound_cls={bound_cls.__name__} "
+                f"is {'async' if bound_is_async else 'sync'}"
+            )
+
         self.bound_cls = bound_cls
         self.is_async = is_async
         self.conditions = tuple(conditions)
