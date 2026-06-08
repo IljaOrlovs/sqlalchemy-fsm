@@ -8,6 +8,11 @@ from sqlalchemy import types
 
 
 class FSMField(types.String):
+    # Subscripted subclasses (`FSMField["a","b"]`) are pure tag classes —
+    # the SA cache key from `String` applies unchanged. Without this,
+    # SA emits a SAWarning for every dynamic subclass.
+    cache_ok = True
+
     """A `String` column flagged so `@transition` can discover it.
 
     Subscript syntax declares the closed set of legal states. When present,

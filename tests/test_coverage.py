@@ -478,8 +478,8 @@ class TestValidationFsmColumnHelpers:
             __tablename__ = "validation_no_fsm"
             id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
 
-        # No exception — None is the "skip validation" signal.
-        assert _validation._fsm_column(_Plain) is None
+        # No exception — empty list is the "skip validation" signal.
+        assert _validation._fsm_columns(_Plain) == []
         # And `validate_fsm` no-ops.
         _validation.validate_fsm(_Plain)
 

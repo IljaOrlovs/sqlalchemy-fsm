@@ -43,7 +43,8 @@ class TooMuchFsm(Base):
 def test_too_much_fsm():
     with pytest.raises(exc.SetupError) as err:
         TooMuchFsm().change_state()
-    assert "More than one FSMField found in model" in str(err)
+    assert "2 FSMField columns" in str(err)
+    assert "FSMColumn.transition" in str(err)
 
 
 def test_transition_raises_on_unknown():

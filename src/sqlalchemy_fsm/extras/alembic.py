@@ -75,23 +75,30 @@ def _require_alembic() -> None:
 # --- core state extraction --------------------------------------------------
 
 
-def collect_states(model_cls: type) -> set[str]:
+def collect_states(model_cls: type, column: Any = None) -> set[str]:
     """Return the closed set of legal states declared by a model's transitions.
 
     Walks every `@transition` on `model_cls` (including sub-handlers of
     class-grouped transitions) and unions their concrete `source` / `target`
     states. Wildcards (`"*"`) and `None` sources are excluded — they aren't
     constants you can pin in a CHECK constraint.
+
+    If `column` is given, only consider transitions bound to it.
     """
-    return collect_transition_states(model_cls)
+    return collect_transition_states(model_cls, column=column)
+
+
+def _fsm_columns(model_cls: type) -> list[Any]:
+    """Every FSMField column on this mapped class, in declaration order."""
+    return [c for c in sqla_inspect(model_cls).columns if isinstance(c.type, FSMField)]
 
 
 def _fsm_column_name(model_cls: type) -> str:
-    """Discover the name of the FSMField column on this mapped class."""
-    for col in sqla_inspect(model_cls).columns:
-        if isinstance(col.type, FSMField):
-            return col.name
-    raise ValueError(f"No FSMField column on {model_cls!r}")
+    """Discover the name of the (sole) FSMField column on this mapped class."""
+    cols = _fsm_columns(model_cls)
+    if not cols:
+        raise ValueError(f"No FSMField column on {model_cls!r}")
+    return cols[0].name
 
 
 def fsm_check_name(table_name: str, column_name: str) -> str:
@@ -105,14 +112,27 @@ def _check_sql(column_name: str, states: set[str]) -> str:
     return f"{column_name} IN ({quoted})"
 
 
-def render_check_constraint(model_cls: type) -> CheckConstraint:
-    """Build (without attaching) the `CheckConstraint` for a model's FSM column."""
-    states = collect_states(model_cls)
-    column = _fsm_column_name(model_cls)
+def render_check_constraint(model_cls: type, column: Any = None) -> CheckConstraint:
+    """Build (without attaching) the `CheckConstraint` for one FSM column.
+
+    `column` may be a `Column` instance or `None` (uses the sole FSM
+    column on the model).
+    """
+    cols = _fsm_columns(model_cls)
+    if not cols:
+        raise ValueError(f"No FSMField column on {model_cls!r}")
+    if column is None:
+        column = cols[0]
+    states = collect_states(model_cls, column=column if len(cols) > 1 else None)
     table_name = sqla_inspect(model_cls).local_table.name
     return CheckConstraint(
-        _check_sql(column, states), name=fsm_check_name(table_name, column)
+        _check_sql(column.name, states), name=fsm_check_name(table_name, column.name)
     )
+
+
+def render_check_constraints(model_cls: type) -> list[CheckConstraint]:
+    """One `CheckConstraint` per FSM column on the model."""
+    return [render_check_constraint(model_cls, col) for col in _fsm_columns(model_cls)]
 
 
 # --- metadata attachment ---------------------------------------------------
@@ -160,14 +180,14 @@ def attach_fsm_constraints(source: Any) -> list[CheckConstraint]:
         table = getattr(cls, "__table__", None)
         if table is None or not _table_has_fsm_column(table):
             continue
-        column = _fsm_column_name(cls)
-        name = fsm_check_name(table.name, column)
-        existing = [c for c in list(table.constraints) if c.name == name]
-        for c in existing:
-            table.constraints.discard(c)
-        constraint = render_check_constraint(cls)
-        constraint._set_parent(table)  # type: ignore[attr-defined]
-        attached.append(constraint)
+        for col in _fsm_columns(cls):
+            name = fsm_check_name(table.name, col.name)
+            existing = [c for c in list(table.constraints) if c.name == name]
+            for c in existing:
+                table.constraints.discard(c)
+            constraint = render_check_constraint(cls, col)
+            constraint._set_parent(table)  # type: ignore[attr-defined]
+            attached.append(constraint)
     return attached
 
 
@@ -195,52 +215,43 @@ def compare_fsm_check(
     if not _table_has_fsm_column(metadata_table):
         return
 
-    column = next(
-        c.name for c in metadata_table.columns if isinstance(c.type, FSMField)
-    )
-    expected_name = fsm_check_name(table_name, column)
-
-    expected = next(
-        (
-            c
-            for c in metadata_table.constraints
-            if isinstance(c, CheckConstraint) and c.name == expected_name
-        ),
-        None,
-    )
-
     insp: Inspector = autogen_context.inspector
     try:
         db_checks = insp.get_check_constraints(table_name)
     except NotImplementedError:
         return
-    db = next((c for c in db_checks if c.get("name") == expected_name), None)
 
-    if expected is None and db is None:
-        return
-    if (
-        expected is not None
-        and db is not None
-        and _normalize_sqltext(str(expected.sqltext))
-        == _normalize_sqltext(db.get("sqltext", ""))
-    ):
-        return  # in sync
-
-    if db is not None:
-        # Build a placeholder Constraint for the to-be-dropped CHECK so
-        # alembic's reversibility helpers can render it. The SQL text
-        # comes from the DB inspection, the name matches.
-        old_constraint = CheckConstraint(db.get("sqltext", ""), name=expected_name)
-        # Attach to a transient Table so the constraint has a table
-        # reference (required by alembic's renderer).
-        old_constraint._set_parent(metadata_table)  # type: ignore[attr-defined]
-        modify_table_ops.ops.append(
-            _ops.DropConstraintOp.from_constraint(old_constraint)
+    for col in (c for c in metadata_table.columns if isinstance(c.type, FSMField)):
+        expected_name = fsm_check_name(table_name, col.name)
+        expected = next(
+            (
+                c
+                for c in metadata_table.constraints
+                if isinstance(c, CheckConstraint) and c.name == expected_name
+            ),
+            None,
         )
-        # Detach so we don't leave the placeholder on the metadata table.
-        metadata_table.constraints.discard(old_constraint)
-    if expected is not None:
-        modify_table_ops.ops.append(_ops.AddConstraintOp.from_constraint(expected))
+        db = next((c for c in db_checks if c.get("name") == expected_name), None)
+
+        if expected is None and db is None:
+            continue
+        if (
+            expected is not None
+            and db is not None
+            and _normalize_sqltext(str(expected.sqltext))
+            == _normalize_sqltext(db.get("sqltext", ""))
+        ):
+            continue  # in sync
+
+        if db is not None:
+            old_constraint = CheckConstraint(db.get("sqltext", ""), name=expected_name)
+            old_constraint._set_parent(metadata_table)  # type: ignore[attr-defined]
+            modify_table_ops.ops.append(
+                _ops.DropConstraintOp.from_constraint(old_constraint)
+            )
+            metadata_table.constraints.discard(old_constraint)
+        if expected is not None:
+            modify_table_ops.ops.append(_ops.AddConstraintOp.from_constraint(expected))
 
 
 _COMPARATOR_REGISTERED = False

@@ -149,7 +149,8 @@ class TestInvalidModel:
         model = InvalidModel()
         with pytest.raises(SetupError) as err:
             model.validated()
-        assert "More than one FSMField found" in str(err)
+        assert "2 FSMField columns" in str(err)
+        assert "FSMColumn.transition" in str(err)
 
 
 class Document(Base):

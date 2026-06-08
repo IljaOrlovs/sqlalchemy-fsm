@@ -142,6 +142,9 @@ quote-style = "double"
 [tool.pyright]
 include = ["src", "tests"]
 exclude = ["**/__pycache__", ".venv", "docs"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.10"
 reportIncompatibleVariableOverride = false
 
 [tool.pytest.ini_options]

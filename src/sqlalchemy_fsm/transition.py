@@ -185,9 +185,17 @@ class FsmTransition(InspectionAttrInfo):
     extension_type = HYBRID_METHOD
     _sa_fsm_is_transition = True
 
-    def __init__(self, meta: FSMMeta, set_function: Callable[..., Any]) -> None:
+    def __init__(
+        self,
+        meta: FSMMeta,
+        set_function: Callable[..., Any],
+        column_ref: Any = None,
+    ) -> None:
         self.meta = meta
         self.set_fn = set_function
+        # Set by `FSMColumn.transition`; `None` for the legacy module-level
+        # `@transition`, which resolves to the model's single FSM column.
+        self.column_ref = column_ref
 
     @overload
     def __get__(self, instance: None, owner: type) -> ClassBoundFsmTransition: ...
@@ -202,7 +210,7 @@ class FsmTransition(InspectionAttrInfo):
         try:
             sql_alchemy_handle = owner._sa_fsm_sqlalchemy_handle
         except AttributeError:
-            sql_alchemy_handle = bound.SqlAlchemyHandle(owner, instance)
+            sql_alchemy_handle = bound.resolve_handle(owner, instance, self.column_ref)
 
         if instance is None:
             return ClassBoundFsmTransition(

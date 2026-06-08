@@ -8,7 +8,7 @@ dependency-free so anything in the package can import it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from . import bound as _bound
 from .transition import FsmTransition
@@ -37,20 +37,30 @@ class TransitionEdge:
         return self.source
 
 
-def iter_transitions(model_cls: type) -> list[tuple[str, FsmTransition]]:
+def iter_transitions(
+    model_cls: type, column: Any = None
+) -> list[tuple[str, FsmTransition]]:
     """Yield (attribute name, descriptor) for every `@transition` on `cls`.
 
     Walks the MRO without triggering descriptor `__get__`, so we see the
     `FsmTransition` itself rather than a bound wrapper. `dir()` already
     deduplicates names, and the inner loop stops at the first MRO hit,
-    so overrides win and each name appears at most once."""
+    so overrides win and each name appears at most once.
+
+    If `column` is given, only return transitions bound to that column
+    (`column_ref is column`). Transitions with no `column_ref` (legacy
+    `@transition(...)`) are returned for every `column` — this only
+    matters in the single-column case, where the mismatch is the right
+    behavior.
+    """
     out: list[tuple[str, FsmTransition]] = []
     for name in dir(model_cls):
         for klass in model_cls.__mro__:
             if name in klass.__dict__:
                 attr = klass.__dict__[name]
                 if isinstance(attr, FsmTransition):
-                    out.append((name, attr))
+                    if column is None or attr.column_ref is None or attr.column_ref is column:
+                        out.append((name, attr))
                 break
     return out
 
@@ -71,11 +81,14 @@ def _concrete_states_from_meta(meta: FSMMeta) -> set[str]:
     return out
 
 
-def collect_transition_states(model_cls: type) -> set[str]:
+def collect_transition_states(model_cls: type, column: Any = None) -> set[str]:
     """All concrete (non-wildcard, non-None) states referenced by any
-    transition on `model_cls`, including class-grouped sub-handlers."""
+    transition on `model_cls`, including class-grouped sub-handlers.
+
+    If `column` is given, only consider transitions bound to it.
+    """
     states: set[str] = set()
-    for _, fsm_t in iter_transitions(model_cls):
+    for _, fsm_t in iter_transitions(model_cls, column=column):
         meta = fsm_t.meta
         states |= _concrete_states_from_meta(meta)
         if _is_class_group(meta, fsm_t.set_fn):
@@ -84,15 +97,17 @@ def collect_transition_states(model_cls: type) -> set[str]:
     return states
 
 
-def collect_edges(model_cls: type) -> list[TransitionEdge]:
+def collect_edges(model_cls: type, column: Any = None) -> list[TransitionEdge]:
     """Every (source, target, method-name) edge declared by `model_cls`.
 
     Class-grouped transitions are flattened the same way the runtime
     dispatches: each sub-handler contributes edges merged with its
     parent meta's target.
+
+    If `column` is given, only return edges from transitions bound to it.
     """
     edges: list[TransitionEdge] = []
-    for name, fsm_t in iter_transitions(model_cls):
+    for name, fsm_t in iter_transitions(model_cls, column=column):
         meta = fsm_t.meta
         if _is_class_group(meta, fsm_t.set_fn):
             edges.extend(_edges_from_class_group(name, meta, fsm_t.set_fn))

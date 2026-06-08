@@ -16,7 +16,7 @@ they produce the textual source format only.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..introspection import TransitionEdge, collect_edges
 
@@ -44,18 +44,22 @@ def _sorted_for_display(edges: list[TransitionEdge]) -> list[TransitionEdge]:
     return sorted(edges, key=lambda e: (e.label, e.display_source, e.target))
 
 
-def to_mermaid(model_cls: type) -> str:
+def to_mermaid(model_cls: type, column: Any = None) -> str:
     """Render as a Mermaid `stateDiagram-v2` block. Renders natively on
-    GitHub-flavoured markdown."""
-    edges = _sorted_for_display(collect_edges(model_cls))
+    GitHub-flavoured markdown.
+
+    Pass `column` to scope the diagram to a single FSM column when the
+    model has more than one.
+    """
+    edges = _sorted_for_display(collect_edges(model_cls, column=column))
     lines = ["stateDiagram-v2"]
     lines.extend(f"    {e.display_source} --> {e.target}: {e.label}" for e in edges)
     return "\n".join(lines)
 
 
-def to_dot(model_cls: type) -> str:
+def to_dot(model_cls: type, column: Any = None) -> str:
     """Render as Graphviz DOT. Pipe through `dot -Tpng` to rasterise."""
-    edges = _sorted_for_display(collect_edges(model_cls))
+    edges = _sorted_for_display(collect_edges(model_cls, column=column))
     name = model_cls.__name__
     lines = [f"digraph {name} {{", "    rankdir=LR;"]
     for node in sorted(_all_nodes(edges)):
@@ -68,9 +72,9 @@ def to_dot(model_cls: type) -> str:
     return "\n".join(lines)
 
 
-def to_plantuml(model_cls: type) -> str:
+def to_plantuml(model_cls: type, column: Any = None) -> str:
     """Render as PlantUML state diagram source."""
-    edges = _sorted_for_display(collect_edges(model_cls))
+    edges = _sorted_for_display(collect_edges(model_cls, column=column))
     lines = ["@startuml"]
     for e in edges:
         src = "[*]" if e.source == "*" else f'"{e.display_source}"'

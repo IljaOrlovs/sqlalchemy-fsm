@@ -31,16 +31,9 @@ if TYPE_CHECKING:
     from sqlalchemy import Column
 
 
-def _fsm_column(model_cls: type) -> Column | None:
-    """The model's FSM-managed column, or `None` if it has none.
-
-    Re-raises `MultipleFSMColumnsError` — that's a misconfiguration that
-    should fail at mapper-config time, not be silently skipped.
-    """
-    try:
-        return bound.column_cache.get_value(model_cls)
-    except exc.NoFSMColumnError:
-        return None
+def _fsm_columns(model_cls: type) -> list[Column]:
+    """Every FSMField-typed column on the model, in declaration order."""
+    return list(bound.fsm_columns_cache.get_value(model_cls))
 
 
 def _declared_states(column: Column) -> frozenset[str] | None:
@@ -130,17 +123,23 @@ def _reachable_from(start: str, edges, allowed: frozenset[str]) -> set[str]:
 
 
 def validate_fsm(model_cls: type) -> None:
-    """Validate the transition graph against the typed `FSMField` column.
+    """Validate the transition graph against every typed `FSMField` column.
 
-    No-ops if the column is plain `FSMField` (no declared states). Raises
+    Each FSM column is validated independently (correctness, completeness,
+    reachability). Untyped `FSMField` columns are skipped. Raises
     `SetupError` on any violation.
     """
-    column = _fsm_column(model_cls)
-    if column is None:
-        return
+    columns = _fsm_columns(model_cls)
+    for column in columns:
+        _validate_fsm_column(model_cls, column, multi=len(columns) > 1)
+
+
+def _validate_fsm_column(model_cls: type, column: Column, multi: bool) -> None:
     allowed = _declared_states(column)
     if not allowed:
         return
+
+    where = f"{model_cls.__name__}.{column.name}" if multi else model_cls.__name__
 
     # 0. The column's default= must be present and a declared state. We
     # check this first so the error is specific instead of getting masked
@@ -148,24 +147,27 @@ def validate_fsm(model_cls: type) -> None:
     start = _initial_state(column)
     if start is None:
         raise exc.SetupError(
-            f"{model_cls.__name__}: typed FSMField columns must declare a "
+            f"{where}: typed FSMField columns must declare a "
             f"scalar `default=<state>` so reachability can be validated."
         )
     if start not in allowed:
         raise exc.SetupError(
-            f"{model_cls.__name__}: column default={start!r} is not in the "
+            f"{where}: column default={start!r} is not in the "
             f"declared FSMField allowed set {sorted(allowed)!r}."
         )
 
-    # The initial state is implicitly "used" — it's the entry point.
-    used = collect_transition_states(model_cls) | {start}
-    edges = collect_edges(model_cls)
+    # Per-column transition graph. In single-column models we keep the
+    # legacy behavior of treating every `@transition` as belonging to the
+    # column; in multi-column models we filter strictly by `column_ref`.
+    filter_col = column if multi else None
+    used = collect_transition_states(model_cls, column=filter_col) | {start}
+    edges = collect_edges(model_cls, column=filter_col)
 
     # 1. Correct: every used state is allowed.
     unknown = used - allowed
     if unknown:
         raise exc.SetupError(
-            f"{model_cls.__name__}: transition references states "
+            f"{where}: transition references states "
             f"{sorted(unknown)!r} not in the declared FSMField allowed set "
             f"{sorted(allowed)!r}."
         )
@@ -174,7 +176,7 @@ def validate_fsm(model_cls: type) -> None:
     unused = allowed - used
     if unused:
         raise exc.SetupError(
-            f"{model_cls.__name__}: declared FSMField states "
+            f"{where}: declared FSMField states "
             f"{sorted(unused)!r} are never referenced by any @transition."
         )
 
@@ -183,7 +185,7 @@ def validate_fsm(model_cls: type) -> None:
     unreachable = allowed - reachable
     if unreachable:
         raise exc.SetupError(
-            f"{model_cls.__name__}: states {sorted(unreachable)!r} are "
+            f"{where}: states {sorted(unreachable)!r} are "
             f"unreachable from initial state {start!r}."
         )
 

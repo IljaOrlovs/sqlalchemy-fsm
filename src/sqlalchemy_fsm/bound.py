@@ -12,31 +12,68 @@ from . import cache, events, exc, meta
 from .sqltypes import FSMField
 
 
-@cache.weak_value_cache
-def column_cache(table_class: type) -> Any:
-    fsm_fields = [
-        col for col in sqla_inspect(table_class).columns if isinstance(col.type, FSMField)
-    ]
+@cache.dict_cache
+def fsm_columns_cache(table_class: type) -> tuple[Any, ...]:
+    """All FSMField-typed columns on `table_class`, in column declaration order."""
+    return tuple(
+        col
+        for col in sqla_inspect(table_class).columns
+        if isinstance(col.type, FSMField)
+    )
 
-    if len(fsm_fields) == 0:
+
+def single_fsm_column(table_class: type) -> Any:
+    """Return the model's sole FSMField column. Raises if 0 or >1.
+
+    Used by the legacy bare-`@transition(...)` path; multi-column models
+    must use `FSMColumn.transition(...)` so the binding is explicit.
+    """
+    cols = fsm_columns_cache.get_value(table_class)
+    if len(cols) == 0:
         raise exc.NoFSMColumnError("No FSMField found in model")
-    if len(fsm_fields) > 1:
+    if len(cols) > 1:
         raise exc.MultipleFSMColumnsError(
-            f"More than one FSMField found in model ({fsm_fields})"
+            f"{table_class.__name__} has {len(cols)} FSMField columns "
+            f"({[c.name for c in cols]!r}); use FSMColumn.transition(...) "
+            f"to bind each @transition to a specific column."
         )
-    return fsm_fields[0]
+    return cols[0]
+
+
+def resolve_handle(
+    table_class: type, record: Any, column_ref: Any | None
+) -> "SqlAlchemyHandle":
+    """Build the handle for a transition.
+
+    `column_ref` is the `FSMColumn` instance the transition was declared
+    on. When `None` (legacy module-level `@transition`), fall back to the
+    single-column rule.
+    """
+    if column_ref is None:
+        column_ref = single_fsm_column(table_class)
+    return SqlAlchemyHandle(table_class, column_ref, record)
+
+
+# Back-compat shim. External code (and tests) sometimes reach for
+# `column_cache` directly — keep the import working but route it through
+# the new single-column resolver.
+class _ColumnCacheShim:
+    def get_value(self, table_class: type) -> Any:
+        return single_fsm_column(table_class)
+
+
+column_cache = _ColumnCacheShim()
 
 
 @dataclass(slots=True)
 class SqlAlchemyHandle:
     table_class: type
+    fsm_column: Any
     record: Any = None
-    fsm_column: Any = field(init=False)
     column_name: str = field(init=False)
     dispatch: Any = field(init=False, default=None)
 
     def __post_init__(self) -> None:
-        self.fsm_column = column_cache.get_value(self.table_class)
         self.column_name = self.fsm_column.name
         if self.record:
             self.dispatch = events.BoundFSMDispatcher(self.record)
