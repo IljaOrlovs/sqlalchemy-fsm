@@ -26,7 +26,7 @@ def test_not_fsm():
 
 def test_not_transition():
     with pytest.raises(AttributeError):
-        NotFsm.not_transition.can_proceed()
+        NotFsm.not_transition.can_proceed()  # pyright: ignore[reportFunctionMemberAccess]
 
 
 class TooMuchFsm(Base):
@@ -61,7 +61,7 @@ def test_transition_raises_on_unknown():
 def test_transition_raises_on_invalid_state():
     with pytest.raises(NotImplementedError) as err:
 
-        @transition(source=42, target="blah")
+        @transition(source=42, target="blah")  # pyright: ignore[reportArgumentType]
         def func1():
             pass
 
@@ -69,7 +69,7 @@ def test_transition_raises_on_invalid_state():
 
     with pytest.raises(NotImplementedError) as err:
 
-        @transition(source="*", target=42)
+        @transition(source="*", target=42)  # pyright: ignore[reportArgumentType]
         def func2():
             pass
 
@@ -77,7 +77,7 @@ def test_transition_raises_on_invalid_state():
 
     with pytest.raises(NotImplementedError) as err:
 
-        @transition(source=["str", 42], target="blah")
+        @transition(source=["str", 42], target="blah")  # pyright: ignore[reportArgumentType]
         def func3():
             pass
 

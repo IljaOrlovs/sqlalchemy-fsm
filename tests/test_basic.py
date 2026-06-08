@@ -171,7 +171,7 @@ class TestDocument(object):
     def test_any_state_field_name_allowed(self):
         model = Document()
         model.published.set()
-        assert model.status == "published"
+        assert model.status == "published"  # pyright: ignore[reportGeneralTypeIssues]
 
 
 class NullSource(Base):

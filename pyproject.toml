@@ -36,6 +36,7 @@ dev = [
     "pytest-cov>=5.0",
     "pytest-benchmark>=4.0",
     "ruff>=0.8",
+    "pyright>=1.1.409",
 ]
 
 [build-system]
@@ -72,9 +73,12 @@ select = [
     "W",
     "N",
     "C4",
+    "T20",
+    "PTH",
 ]
-# FSMException is the public exception base class; renaming would break the API.
-ignore = ["N818"]
+# N802: snake_case method names — codebase uses `is_` etc. on hybrid handles.
+# N818: FSMException is the public exception base class; renaming would break the API.
+ignore = ["N802", "N818"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = [
@@ -89,6 +93,11 @@ forced-separate = ["tests"]
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.pyright]
+include = ["src", "tests"]
+exclude = ["**/__pycache__", ".venv", "docs"]
+reportIncompatibleVariableOverride = false
 
 [tool.pytest.ini_options]
 addopts = "-v -l --color=yes --cov=sqlalchemy_fsm --cov-report=term-missing --no-cov-on-fail"

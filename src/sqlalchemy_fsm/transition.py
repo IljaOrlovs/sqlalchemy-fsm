@@ -2,6 +2,8 @@
 
 import inspect as py_inspect
 import warnings
+from collections.abc import Iterable
+from typing import Any, Callable, Union, overload
 
 try:
     # SQLAlchemy 2.0+
@@ -10,11 +12,15 @@ try:
     HYBRID_METHOD = HybridExtensionType.HYBRID_METHOD
 except ImportError:
     # SQLAlchemy 1.x
-    from sqlalchemy.ext.hybrid import HYBRID_METHOD
+    from sqlalchemy.ext.hybrid import (
+        HYBRID_METHOD,  # pyright: ignore[reportAttributeAccessIssue]
+    )
 from sqlalchemy.orm.interfaces import InspectionAttrInfo
 
 from . import bound, cache, exc
 from .meta import FSMMeta
+
+SourceState = Union[str, None, Iterable[Union[str, None]]]
 
 
 @cache.dict_cache
@@ -107,6 +113,11 @@ class FsmTransition(InspectionAttrInfo):
         self.meta = meta
         self.set_fn = set_function
 
+    @overload
+    def __get__(self, instance: None, owner: type) -> ClassBoundFsmTransition: ...
+    @overload
+    def __get__(self, instance: object, owner: type) -> InstanceBoundFsmTransition: ...
+
     def __get__(self, instance, owner):
         try:
             sql_alchemy_handle = owner._sa_fsm_sqlalchemy_handle
@@ -124,9 +135,12 @@ class FsmTransition(InspectionAttrInfo):
             )
 
 
-def transition(source="*", target=None, conditions=()):
+def transition(
+    source: SourceState = "*",
+    target: Union[str, None] = None,
+    conditions: Iterable[Callable[..., Any]] = (),
+) -> Callable[[Any], FsmTransition]:
     def inner_transition(subject):
-
         if py_inspect.isfunction(subject):
             meta = FSMMeta(source, target, conditions, (), bound.BoundFSMFunction)
         elif py_inspect.isclass(subject):
