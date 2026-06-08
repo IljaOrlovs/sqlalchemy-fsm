@@ -1,7 +1,6 @@
 import pytest
 import sqlalchemy
 
-
 from sqlalchemy_fsm import FSMField, transition
 from sqlalchemy_fsm.exc import (
     InvalidSourceStateError,
@@ -33,7 +32,6 @@ def three_argument_condition(expected1, expected2, expected3):
 
 
 class MultiSourceBlogPost(Base):
-
     __tablename__ = "MultiSourceBlogPost"
     id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
     state = sqlalchemy.Column(FSMField)

@@ -7,7 +7,6 @@ import warnings
 
 from sqlalchemy import inspect as sqla_inspect
 
-
 from . import cache, events, exc, meta
 from .sqltypes import FSMField
 
@@ -15,9 +14,7 @@ from .sqltypes import FSMField
 @cache.weak_value_cache
 def column_cache(table_class):
     fsm_fields = [
-        col
-        for col in sqla_inspect(table_class).columns
-        if isinstance(col.type, FSMField)
+        col for col in sqla_inspect(table_class).columns if isinstance(col.type, FSMField)
     ]
 
     if len(fsm_fields) == 0:
@@ -30,7 +27,6 @@ def column_cache(table_class):
 
 
 class SqlAlchemyHandle(object):
-
     __slots__ = (
         "table_class",
         "record",
@@ -50,7 +46,6 @@ class SqlAlchemyHandle(object):
 
 
 class BoundFSMBase(object):
-
     __slots__ = ("meta", "sqla_handle", "extra_call_args")
 
     def __init__(self, meta, sqla_handle, extra_call_args):
@@ -71,16 +66,13 @@ class BoundFSMBase(object):
 
 
 class BoundFSMFunction(BoundFSMBase):
-
     __slots__ = BoundFSMBase.__slots__ + ("set_func", "my_args")
 
     def __init__(self, meta, sqla_handle, set_func, extra_call_args):
         super().__init__(meta, sqla_handle, extra_call_args)
         self.set_func = set_func
         self.my_args = (
-            self.meta.extra_call_args
-            + self.extra_call_args
-            + (self.sqla_handle.record,)
+            self.meta.extra_call_args + self.extra_call_args + (self.sqla_handle.record,)
         )
 
     def get_call_iface_error(self, fn, args, kwargs):
@@ -120,7 +112,10 @@ class BoundFSMFunction(BoundFSMBase):
             # Check that the function itself can be called with these args
             err = self.get_call_iface_error(self.set_func, args, kwargs)
             if err:
-                warnings.warn("Failure to validate handler call args: {}".format(err))
+                warnings.warn(
+                    "Failure to validate handler call args: {}".format(err),
+                    stacklevel=2,
+                )
                 # Can not map call args to handler's
                 out = False
                 if conditions:
@@ -140,9 +135,7 @@ class BoundFSMFunction(BoundFSMBase):
 
         args = self.my_args + tuple(args)
 
-        self.sqla_handle.dispatch.before_state_change(
-            source=old_state, target=new_state
-        )
+        self.sqla_handle.dispatch.before_state_change(source=old_state, target=new_state)
 
         self.set_func(*args, **kwargs)
         setattr(sqla_target, self.sqla_handle.column_name, new_state)
@@ -220,7 +213,7 @@ def inherited_bound_classes(key):
     def _get_bound_sub_metas(child_cls, sub_transitions, parent_meta):
         out = []
 
-        for (_name, transition) in sub_transitions:
+        for _name, transition in sub_transitions:
             sub_meta = transition._sa_fsm_meta
             arithmetics = TansitionStateArtithmetics(parent_meta, sub_meta)
 
@@ -271,7 +264,6 @@ def inherited_bound_classes(key):
 
 
 class BoundFSMClass(BoundFSMBase):
-
     __slots__ = BoundFSMBase.__slots__ + ("bound_sub_metas", "_target_cached")
 
     def __init__(self, meta, sqlalchemy_handle, child_cls, extra_call_args):
@@ -288,7 +280,7 @@ class BoundFSMClass(BoundFSMBase):
     @property
     def target_state(self):
         if self._target_cached is None:
-            targets = tuple(set(meta.meta.target for meta in self.bound_sub_metas))
+            targets = tuple({meta.meta.target for meta in self.bound_sub_metas})
             assert len(targets) == 1, "One and just one target expected"
             self._target_cached = targets[0]
         return self._target_cached

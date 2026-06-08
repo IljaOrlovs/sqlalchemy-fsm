@@ -1,47 +1,68 @@
+---
 name: Release
 on:
-  workflow_run:
-    workflows: ["CI"]
-    branches: [main]
-    types:
-      - completed
+  push:
+    tags:
+      - 'v*.*.*'
 
 jobs:
+  test:
+    uses: ./.github/workflows/main.yml
   publish:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    needs: test
     runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write  # Required for PyPI OIDC trusted publishing
+      contents: write  # Required for creating GitHub Releases
     steps:
-      - uses: actions/checkout@v2
-      - name: Set up Python
-        uses: actions/setup-python@v2
-      - name: Install dependencies
-        run: pip install build
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # pdm-backend SCM versioning needs tag history
+      - name: Setup PDM
+        uses: pdm-project/setup-pdm@v4
+        with:
+          python-version: '3.13'
       - name: Build packages
-        run: python -m build --outdir dist/
-      - name: Publish distribution to Test PyPI
-        uses: pypa/gh-action-pypi-publish@master
-        with:
-          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
-          repository_url: https://test.pypi.org/legacy/
-      - name: Publish distribution to PRODUCTION PyPI
-        # if: false
-        uses: pypa/gh-action-pypi-publish@master
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-  bump-version: # Bump version for the next release
-    needs: publish
-    runs-on: ubuntu-latest
-    # Bump version in the PR that targets the "main" branch
-    steps:
-      - uses: actions/checkout@v2
-      - name: Set up Python
-        uses: actions/setup-python@v2
-      - name: Install dependencies
+        # Pin the version explicitly from the tag. Bypasses pdm-backend's
+        # SCM dirty-tree detection, which can append a PEP-440 local
+        # segment (e.g. `+d20260521`) that PyPI rejects with 400.
         run: |
-          pip install bump2version
-      - name: Bump version
+          export PDM_BUILD_SCM_VERSION="${GITHUB_REF_NAME#v}"
+          pdm build
+      - name: Sign artifacts with Sigstore
+        uses: sigstore/gh-action-sigstore-python@v3.0.1
+        with:
+          inputs: |
+            ./dist/*.whl
+            ./dist/*.tar.gz
+      - name: Move Sigstore bundles out of dist/
+        # `pypa/gh-action-pypi-publish` runs `twine check dist/*` internally
+        # and trips on `*.sigstore.json` ("InvalidDistribution: Unknown
+        # distribution format"). Park signatures elsewhere so dist/ holds
+        # only wheels + sdists at publish time; the GitHub Release step
+        # below picks them up from `signatures/`.
         run: |
-          git config --global user.email "github+actions@gmail.com"
-          git config --global user.name "Actions"
-          bump2version patch
-          git push --follow-tags
+          mkdir -p signatures
+          mv dist/*.sigstore.json signatures/
+      - name: Publish to Test PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          attestations: false
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          body: ${{ format('Release {0}.', github.ref_name) }}
+          # Tags like v1.2.3rc1, v1.2.3a1, v1.2.3.dev0 → pre-release.
+          # Plain v1.2.3 → stable.
+          prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'dev') }}
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            signatures/*.sigstore.json
+          fail_on_unmatched_files: true

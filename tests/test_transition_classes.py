@@ -29,7 +29,6 @@ class SeparateDecoratedPublishHandler(object):
 
 
 class AltSyntaxBlogPost(Base):
-
     __tablename__ = "AltSyntaxBlogPost"
     id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
     state = sqlalchemy.Column(FSMField)
@@ -105,12 +104,12 @@ class TestAltSyntaxBlogPost(object):
                 hidden_records + pre_decorated_published + post_decorated_published
             )
         ]
-        for (handler, expected_group) in [
+        for handler, expected_group in [
             ("hide", hidden_records),
             ("pre_decorated_publish", pre_decorated_published),
             ("post_decorated_publish", post_decorated_published),
         ]:
-            expected_ids = set(el.id for el in expected_group)
+            expected_ids = {el.id for el in expected_group}
             attr = getattr(AltSyntaxBlogPost, handler)
 
             if query_method == "call":
@@ -135,7 +134,7 @@ class TestAltSyntaxBlogPost(object):
                 .all()
             )
             assert len(matching) == len(expected_group)
-            assert set(el.id for el in matching) == expected_ids
+            assert {el.id for el in matching} == expected_ids
 
             not_matching = (
                 session.query(AltSyntaxBlogPost)
@@ -146,6 +145,6 @@ class TestAltSyntaxBlogPost(object):
                 .all()
             )
             assert len(not_matching) == (len(all_ids) - len(expected_group))
-            assert not expected_ids.intersection(
-                el.id for el in not_matching
-            ), expected_ids.intersection(el.id for el in not_matching)
+            assert not expected_ids.intersection(el.id for el in not_matching), (
+                expected_ids.intersection(el.id for el in not_matching)
+            )

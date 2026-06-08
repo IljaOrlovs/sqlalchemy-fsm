@@ -2,7 +2,6 @@ import unittest
 
 import sqlalchemy
 
-
 from sqlalchemy_fsm import FSMField, transition
 from sqlalchemy_fsm.exc import (
     PreconditionError,

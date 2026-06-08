@@ -1,8 +1,16 @@
-""" Transition decorator. """
+"""Transition decorator."""
+
 import inspect as py_inspect
 import warnings
 
-from sqlalchemy.ext.hybrid import HYBRID_METHOD
+try:
+    # SQLAlchemy 2.0+
+    from sqlalchemy.ext.hybrid import HybridExtensionType
+
+    HYBRID_METHOD = HybridExtensionType.HYBRID_METHOD
+except ImportError:
+    # SQLAlchemy 1.x
+    from sqlalchemy.ext.hybrid import HYBRID_METHOD
 from sqlalchemy.orm.interfaces import InspectionAttrInfo
 
 from . import bound, cache, exc
@@ -21,7 +29,6 @@ def sql_equality_cache(key):
 
 
 class ClassBoundFsmTransition(object):
-
     __slots__ = (
         "_sa_fsm_meta",
         "_sa_fsm_owner_cls",
@@ -45,14 +52,13 @@ class ClassBoundFsmTransition(object):
         if isinstance(value, bool):
             out = self().is_(value)
         else:
-            warnings.warn("Unexpected is_ argument: {!r}".format(value))
+            warnings.warn("Unexpected is_ argument: {!r}".format(value), stacklevel=2)
             # Can be used as sqlalchemy filer. Won't match anything
             out = False
         return out
 
 
 class InstanceBoundFsmTransition(object):
-
     __slots__ = ClassBoundFsmTransition.__slots__ + (
         "_sa_fsm_self",
         "_sa_fsm_bound_meta",
@@ -93,7 +99,6 @@ class InstanceBoundFsmTransition(object):
 
 
 class FsmTransition(InspectionAttrInfo):
-
     is_attribute = True
     extension_type = HYBRID_METHOD
     _sa_fsm_is_transition = True

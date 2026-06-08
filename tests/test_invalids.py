@@ -1,8 +1,7 @@
 import pytest
 import sqlalchemy
 
-from sqlalchemy_fsm import exc, FSMField, transition
-
+from sqlalchemy_fsm import FSMField, exc, transition
 
 from .conftest import Base
 
@@ -53,7 +52,6 @@ def test_transition_raises_on_unknown():
             pass
 
     with pytest.raises(NotImplementedError) as err:
-
         wrapper = transition(source="*", target="blah")
         wrapper(MyCallable())
 

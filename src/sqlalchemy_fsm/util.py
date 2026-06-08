@@ -1,9 +1,8 @@
 """Utility functions and consts."""
-from six import string_types
 
 
 def is_valid_fsm_state(value):
-    return isinstance(value, string_types) and value
+    return isinstance(value, str) and value
 
 
 def is_valid_source_state(value):

@@ -168,6 +168,10 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
+# PDM
+.pdm-python
+.pdm-build/
+
 # Environments
 .env
 .venv

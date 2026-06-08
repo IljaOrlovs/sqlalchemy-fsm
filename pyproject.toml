@@ -1,19 +1,95 @@
 [project]
 name = "sqlalchemy-fsm"
-version = "0.0.0dev0"
-description = "'SQLAlchemy finite state machine support '"
+dynamic = ["version"]
+description = "Finite state machine field for SQLAlchemy"
 authors = [
-    {name = "Ilja Orlovs",email = "IljaOrlovs@users.noreply.github.com"},
+    {name = "Ilja Orlovs", email = "vrghost@gmail.com"},
 ]
-dependencies = []
-requires-python = ">=3.10"
+license = {file = "LICENSE"}
 readme = "README.md"
-license = {text = "MIT"}
+requires-python = ">=3.10"
+keywords = ["sqlalchemy", "finite", "state", "machine", "fsm"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+]
+dependencies = [
+    "SQLAlchemy>=1.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/VRGhost/sqlalchemy-fsm"
+Source = "https://github.com/VRGhost/sqlalchemy-fsm"
+Issues = "https://github.com/VRGhost/sqlalchemy-fsm/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=5.0",
+    "pytest-benchmark>=4.0",
+    "ruff>=0.8",
+]
 
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
 
-
 [tool.pdm]
 distribution = true
+
+[tool.pdm.version]
+source = "scm"
+# Tags look like `v1.2.3` — strip the leading `v` for PEP 440 compliance.
+tag_regex = '^v(?P<version>\d+\.\d+\.\d+.*)$'
+# When building outside a tagged commit (CI on main, local dev), fall back
+# to this so the build still succeeds.
+fallback_version = "0.0.0.dev0"
+
+[tool.pdm.build]
+package-dir = "src"
+includes = ["src/sqlalchemy_fsm"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 90
+
+[tool.ruff.lint]
+select = [
+    "A",
+    "B",
+    "C",
+    "E",
+    "F",
+    "I",
+    "W",
+    "N",
+    "C4",
+]
+# FSMException is the public exception base class; renaming would break the API.
+ignore = ["N818"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = [
+    "F401",
+    "E402",
+]
+
+[tool.ruff.lint.isort]
+order-by-type = true
+known-first-party = ["sqlalchemy_fsm", "tests"]
+forced-separate = ["tests"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+addopts = "-v -l --color=yes --cov=sqlalchemy_fsm --cov-report=term-missing --no-cov-on-fail"
+testpaths = ["tests"]

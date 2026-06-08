@@ -6,7 +6,6 @@ from . import util
 
 
 class FSMMeta(object):
-
     __slots__ = (
         "target",
         "conditions",
@@ -44,8 +43,7 @@ class FSMMeta(object):
 
     def __repr__(self):
         return (
-            "<{} sources={!r} target={!r} conditions={!r} "
-            "extra call args={!r}>".format(
+            "<{} sources={!r} target={!r} conditions={!r} extra call args={!r}>".format(
                 self.__class__.__name__,
                 self.sources,
                 self.target,
