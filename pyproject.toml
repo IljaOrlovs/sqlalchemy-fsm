@@ -1,0 +1,19 @@
+[project]
+name = "sqlalchemy-fsm"
+version = "0.0.0dev0"
+description = "'SQLAlchemy finite state machine support '"
+authors = [
+    {name = "Ilja Orlovs",email = "IljaOrlovs@users.noreply.github.com"},
+]
+dependencies = []
+requires-python = ">=3.10"
+readme = "README.md"
+license = {text = "MIT"}
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+
+[tool.pdm]
+distribution = true
