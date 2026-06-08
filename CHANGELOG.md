@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Mermaid / Graphviz DOT / PlantUML source via `to_mermaid()`, `to_dot()`,
   `to_plantuml()`. Class-grouped transitions are flattened to match
   runtime dispatch.
+- `AsyncSession` support is now verified end-to-end (events, conditions,
+  permissions, class-bound query helpers) via `tests/test_async.py`.
+  No runtime change — `@transition` was already async-safe — but the
+  README now documents the supported usage.
+
+### Internal
+- Dev deps gain `pytest-asyncio`, `aiosqlite`, and `greenlet` for async tests.
 
 ## [2.2.0] - 2026-06-08
 

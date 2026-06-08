@@ -166,6 +166,34 @@ def on_change(instance, source, target):
 
 Remove with `sqlalchemy.event.remove(...)`.
 
+## Async (SQLAlchemy 2.x `AsyncSession`)
+
+`@transition` mutates an attribute on a mapped instance — it does not
+touch the session — so transitions work transparently under
+`AsyncSession`. Call `.set()` like you would synchronously; `await` the
+session commit yourself.
+
+```python
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+engine = create_async_engine("postgresql+asyncpg://…")
+
+async with AsyncSession(engine) as session:
+    doc = AsyncDoc()
+    session.add(doc)
+    doc.publish.set()           # synchronous mutation
+    await session.commit()      # async persistence
+```
+
+The class-bound query helper (`AsyncDoc.publish()`) is a plain SA
+expression, so it composes with `select(...).filter(...)` against an
+`AsyncSession` exactly as in the sync API. Events
+(`before_state_change` / `after_state_change`) fire normally.
+
+Async `conditions` / `permissions` callables (coroutines) are **not
+currently supported** — `set()` is synchronous, so the callables must
+return a value rather than an awaitable.
+
 ## Diagram export
 
 `sqlalchemy_fsm.extras.graph` renders a model's transition graph as

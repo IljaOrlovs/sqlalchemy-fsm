@@ -64,6 +64,9 @@ dev = [
     "ruff>=0.8",
     "pyright>=1.1.409",
     "hypothesis>=6.100",
+    "pytest-asyncio>=0.23",
+    "aiosqlite>=0.19",
+    "greenlet>=3.0",
 ]
 
 [build-system]
@@ -137,6 +140,7 @@ reportIncompatibleVariableOverride = false
 [tool.pytest.ini_options]
 addopts = "-v -l --color=yes --cov=sqlalchemy_fsm --cov-report=term-missing --no-cov-on-fail -m 'not benchmark'"
 testpaths = ["tests"]
+asyncio_mode = "auto"
 markers = [
     "benchmark: micro-benchmarks (deselected by default; run with `-m benchmark --benchmark-only`)",
 ]
