@@ -153,7 +153,7 @@ def test_fsm_meta_rejects_mixed_invalid_in_source_iterable(valid, invalid):
     FSMMeta construction fails."""
     import pytest
 
-    bad = list(valid) + [invalid]
+    bad = [*list(valid), invalid]
     with pytest.raises(NotImplementedError):
         FSMMeta(bad, "target", (), (), bound.BoundFSMFunction)
 

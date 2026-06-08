@@ -6,9 +6,9 @@ def is_valid_fsm_state(value):
 
 
 def is_valid_source_state(value):
-    """This function makes exeptions for special source states.
+    """This function makes exceptions for special source states.
 
     E.g. It explicitly allows '*' (for any state)
-        and `None` (as this is default  value for sqlalchemy colums)
+        and `None` (as this is the default value for sqlalchemy columns).
     """
     return (value == "*") or (value is None) or is_valid_fsm_state(value)

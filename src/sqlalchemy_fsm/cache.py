@@ -1,16 +1,17 @@
 """Caching tools/classes"""
 
 import weakref
+from collections.abc import Callable, MutableMapping
+from dataclasses import dataclass
+from typing import Any
 
 
-class DictCache(object):
+@dataclass(slots=True)
+class DictCache:
     """Generic object that uses dict-like object for caching."""
 
-    __slots__ = ("cache", "get_default")
-
-    def __init__(self, dict_object, get_default):
-        self.cache = dict_object
-        self.get_default = get_default
+    cache: MutableMapping[Any, Any]
+    get_default: Callable[[Any], Any]
 
     def get_value(self, key):
         """A method is faster than __getitem__"""

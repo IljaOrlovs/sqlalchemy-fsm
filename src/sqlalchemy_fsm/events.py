@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from functools import partial
 
 import sqlalchemy.event
@@ -18,17 +19,14 @@ class FSMSchemaEvents(sqlalchemy.orm.events.InstanceEvents):
         form `source` to `target` state."""
 
 
-class InstanceRef(object):
+@dataclass(slots=True)
+class InstanceRef:
     """This class has to be passed to the dispatch call as instance.
 
     No idea why it is required.
-
     """
 
-    __slots__ = ("target",)
-
-    def __init__(self, target):
-        self.target = target
+    target: object
 
     def obj(self):
         return self.target
@@ -47,7 +45,7 @@ def get_class_bound_dispatcher(target_cls):
     return out_val
 
 
-class BoundFSMDispatcher(object):
+class BoundFSMDispatcher:
     """Utility method that simplifies sqlalchemy event dispatch."""
 
     def __init__(self, instance):

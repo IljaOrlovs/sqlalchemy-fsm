@@ -21,7 +21,7 @@ class BlogPostWithConditions(Base):
 
     def __init__(self, *args, **kwargs):
         self.state = "new"
-        super(BlogPostWithConditions, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def model_condition(self):
         return True

@@ -14,7 +14,7 @@ class EventModel(Base):
 
     def __init__(self, *args, **kwargs):
         self.state = "new"
-        super(EventModel, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     @sqlalchemy_fsm.transition(source="*", target="state_a")
     def state_a(self):
@@ -25,7 +25,7 @@ class EventModel(Base):
         pass
 
 
-class TestEventListener(object):
+class TestEventListener:
     @pytest.fixture
     def model(self):
         return EventModel()
@@ -106,7 +106,7 @@ class TransitionClassEventModel(Base):
 
     def __init__(self, *args, **kwargs):
         self.state = "new"
-        super(TransitionClassEventModel, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     @sqlalchemy_fsm.transition(source="*", target="state_a")
     def state_a(self):
@@ -117,7 +117,7 @@ class TransitionClassEventModel(Base):
         pass
 
     @sqlalchemy_fsm.transition(target="state_class")
-    class StateClass(object):
+    class StateClass:
         @sqlalchemy_fsm.transition(source="state_a")
         def from_a(self, instance):
             instance.side_effect = "from_a"
@@ -127,7 +127,7 @@ class TransitionClassEventModel(Base):
             instance.side_effect = "from_b"
 
 
-class TestTransitionClassEvents(object):
+class TestTransitionClassEvents:
     @pytest.fixture
     def model(self):
         return TransitionClassEventModel()
@@ -177,7 +177,7 @@ class TestTransitionClassEvents(object):
         assert listener_result == expected_result
 
 
-class TestEventsLeakage(object):
+class TestEventsLeakage:
     """Ensure that multiple FSM models do not mix their events up."""
 
     @pytest.mark.parametrize(

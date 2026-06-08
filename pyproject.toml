@@ -76,6 +76,8 @@ select = [
     "C4",
     "T20",
     "PTH",
+    "UP",
+    "RUF",
 ]
 # N802: snake_case method names — codebase uses `is_` etc. on hybrid handles.
 # N818: FSMException is the public exception base class; renaming would break the API.

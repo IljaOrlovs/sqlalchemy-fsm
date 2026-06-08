@@ -1,20 +1,29 @@
 """FSM meta object."""
 
 import collections.abc
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from . import util
 
 
-class FSMMeta(object):
+class FSMMeta:
     __slots__ = (
-        "target",
-        "conditions",
-        "sources",
         "bound_cls",
+        "conditions",
         "extra_call_args",
+        "sources",
+        "target",
     )
 
-    def __init__(self, source, target, conditions, extra_args, bound_cls):
+    def __init__(
+        self,
+        source: Any,
+        target: str | None,
+        conditions: Iterable[Callable[..., Any]],
+        extra_args: Iterable[Any],
+        bound_cls: type,
+    ):
         self.bound_cls = bound_cls
         self.conditions = tuple(conditions)
         self.extra_call_args = tuple(extra_args)
@@ -43,11 +52,9 @@ class FSMMeta(object):
 
     def __repr__(self):
         return (
-            "<{} sources={!r} target={!r} conditions={!r} extra call args={!r}>".format(
-                self.__class__.__name__,
-                self.sources,
-                self.target,
-                self.conditions,
-                self.extra_call_args,
-            )
+            f"<{self.__class__.__name__} "
+            f"sources={self.sources!r} "
+            f"target={self.target!r} "
+            f"conditions={self.conditions!r} "
+            f"extra call args={self.extra_call_args!r}>"
         )

@@ -7,7 +7,7 @@ from .conftest import Base
 
 
 # Alternative syntax - separately defined transaction and sqlalchemy classes
-class SeparatePublishHandler(object):
+class SeparatePublishHandler:
     @transition(source="new")
     def do_one(self, instance):
         instance.side_effect = "SeparatePublishHandler::did_one"
@@ -18,7 +18,7 @@ class SeparatePublishHandler(object):
 
 
 @transition(target="pre_decorated_publish")
-class SeparateDecoratedPublishHandler(object):
+class SeparateDecoratedPublishHandler:
     @transition(source="new")
     def do_one(self, instance):
         instance.side_effect = "SeparatePublishHandler::did_one"
@@ -37,7 +37,7 @@ class AltSyntaxBlogPost(Base):
     def __init__(self, *args, **kwargs):
         self.state = "new"
         self.side_effect = "default"
-        super(AltSyntaxBlogPost, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     @transition(source="new", target="hidden")
     def hide(self):
@@ -49,7 +49,7 @@ class AltSyntaxBlogPost(Base):
     )
 
 
-class TestAltSyntaxBlogPost(object):
+class TestAltSyntaxBlogPost:
     @pytest.fixture
     def model(self):
         return AltSyntaxBlogPost()

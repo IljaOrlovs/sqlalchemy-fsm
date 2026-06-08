@@ -40,7 +40,7 @@ class MultiSourceBlogPost(Base):
     def __init__(self, *args, **kwargs):
         self.state = "new"
         self.side_effect = "default"
-        super(MultiSourceBlogPost, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     @transition(source="new", target="hidden")
     def hide(self):
@@ -51,7 +51,7 @@ class MultiSourceBlogPost(Base):
         self.side_effect = "deleted"
 
     @transition(target="published", conditions=[val_contains_condition([1, 2])])
-    class publish(object):  # noqa: N801
+    class publish:  # noqa: N801
         @transition(source="new", conditions=[val_eq_condition(1)])
         def do_one(self, instance, value):
             instance.side_effect = "did_one"
@@ -62,24 +62,24 @@ class MultiSourceBlogPost(Base):
 
         @transition(source="hidden")
         def do_unhide(self, instance, value):
-            instance.side_effect = "did_unhide: {}".format(value)
+            instance.side_effect = f"did_unhide: {value}"
 
         @transition(source="published")
         def do_publish_loop(self, instance, value):
-            instance.side_effect = "do_publish_loop: {}".format(value)
+            instance.side_effect = f"do_publish_loop: {value}"
 
     @transition(target="published", source=["new", "something"])
-    class noPreFilterPublish(object):  # noqa: N801
+    class noPreFilterPublish:  # noqa: N801
         @transition(source="*", conditions=[three_argument_condition(1, 2, 3)])
         def do_three_arg_mk1(self, instance, val1, val2, val3):
-            instance.side_effect = "did_three_arg_mk1::{}".format([val1, val2, val3])
+            instance.side_effect = f"did_three_arg_mk1::{[val1, val2, val3]}"
 
         @transition(source="new", conditions=[three_argument_condition("str", -1, 42)])
         def do_three_arg_mk2(self, instance, val1, val2, val3):
-            instance.side_effect = "did_three_arg_mk2::{}".format([val1, val2, val3])
+            instance.side_effect = f"did_three_arg_mk2::{[val1, val2, val3]}"
 
 
-class TestMultiSourceBlogPost(object):
+class TestMultiSourceBlogPost:
     @pytest.fixture
     def model(self):
         return MultiSourceBlogPost()
@@ -144,7 +144,7 @@ class TestMultiSourceBlogPost(object):
         for arg in (1, 2, 1, 1, 2):
             model.publish.set(arg)
             assert model.state == "published"
-            assert model.side_effect == "do_publish_loop: {}".format(arg)
+            assert model.side_effect == f"do_publish_loop: {arg}"
 
     def test_delete_new(self, model):
         model.delete.set()

@@ -2,8 +2,8 @@
 
 import inspect as py_inspect
 import warnings
-from collections.abc import Iterable
-from typing import Any, Callable, Union, overload
+from collections.abc import Callable, Iterable
+from typing import Any, overload
 
 try:
     # SQLAlchemy 2.0+
@@ -20,7 +20,7 @@ from sqlalchemy.orm.interfaces import InspectionAttrInfo
 from . import bound, cache, exc
 from .meta import FSMMeta
 
-SourceState = Union[str, None, Iterable[Union[str, None]]]
+SourceState = str | None | Iterable[str | None]
 
 
 @cache.dict_cache
@@ -30,11 +30,12 @@ def sql_equality_cache(key):
     So I'm caching them.
     """
     (column, target) = key
-    assert target, "Target must be defined."
+    if not target:
+        raise exc.SetupError("Target must be defined.")
     return column == target
 
 
-class ClassBoundFsmTransition(object):
+class ClassBoundFsmTransition:
     __slots__ = (
         "_sa_fsm_meta",
         "_sa_fsm_owner_cls",
@@ -42,11 +43,11 @@ class ClassBoundFsmTransition(object):
         "_sa_fsm_transition_fn",
     )
 
-    def __init__(self, meta, sqla_handle, paylaod_func, owner_cls):
+    def __init__(self, meta, sqla_handle, payload_func, owner_cls):
         self._sa_fsm_meta = meta
         self._sa_fsm_owner_cls = owner_cls
         self._sa_fsm_sqla_handle = sqla_handle
-        self._sa_fsm_transition_fn = paylaod_func
+        self._sa_fsm_transition_fn = payload_func
 
     def __call__(self):
         """Return a SQLAlchemy filter for this particular state."""
@@ -58,17 +59,14 @@ class ClassBoundFsmTransition(object):
         if isinstance(value, bool):
             out = self().is_(value)
         else:
-            warnings.warn("Unexpected is_ argument: {!r}".format(value), stacklevel=2)
+            warnings.warn(f"Unexpected is_ argument: {value!r}", stacklevel=2)
             # Can be used as sqlalchemy filer. Won't match anything
             out = False
         return out
 
 
-class InstanceBoundFsmTransition(object):
-    __slots__ = ClassBoundFsmTransition.__slots__ + (
-        "_sa_fsm_self",
-        "_sa_fsm_bound_meta",
-    )
+class InstanceBoundFsmTransition:
+    __slots__ = (*ClassBoundFsmTransition.__slots__, "_sa_fsm_self", "_sa_fsm_bound_meta")
 
     def __init__(self, meta, sqla_handle, transition_fn, owner_cls, instance):
         self._sa_fsm_meta = meta
@@ -89,9 +87,8 @@ class InstanceBoundFsmTransition(object):
 
         if not bound_meta.transition_possible():
             raise exc.InvalidSourceStateError(
-                "Unable to switch from {} using method {}".format(
-                    bound_meta.current_state, func.__name__
-                )
+                f"Unable to switch from {bound_meta.current_state} "
+                f"using method {func.__name__}"
             )
         if not bound_meta.conditions_met(args, kwargs):
             raise exc.PreconditionError("Preconditions are not satisfied.")
@@ -137,7 +134,7 @@ class FsmTransition(InspectionAttrInfo):
 
 def transition(
     source: SourceState = "*",
-    target: Union[str, None] = None,
+    target: str | None = None,
     conditions: Iterable[Callable[..., Any]] = (),
 ) -> Callable[[Any], FsmTransition]:
     def inner_transition(subject):
@@ -147,7 +144,7 @@ def transition(
             # Assume a class with multiple handles for various source states
             meta = FSMMeta(source, target, conditions, (), bound.BoundFSMClass)
         else:
-            raise NotImplementedError("Do not know how to {!r}".format(subject))
+            raise NotImplementedError(f"Do not know how to {subject!r}")
 
         return FsmTransition(meta, subject)
 
