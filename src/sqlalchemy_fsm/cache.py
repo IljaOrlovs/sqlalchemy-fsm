@@ -3,17 +3,20 @@
 import weakref
 from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Generic, TypeVar
+
+K = TypeVar("K")
+V = TypeVar("V")
 
 
 @dataclass(slots=True)
-class DictCache:
+class DictCache(Generic[K, V]):
     """Generic object that uses dict-like object for caching."""
 
-    cache: MutableMapping[Any, Any]
-    get_default: Callable[[Any], Any]
+    cache: MutableMapping[K, V]
+    get_default: Callable[[K], V]
 
-    def get_value(self, key: Any) -> Any:
+    def get_value(self, key: K) -> V:
         """A method is faster than __getitem__"""
         try:
             return self.cache[key]
@@ -23,11 +26,11 @@ class DictCache:
             return out
 
 
-def weak_value_cache(get_func: Callable[[Any], Any]) -> DictCache:
+def weak_value_cache(get_func: Callable[[K], V]) -> DictCache[K, V]:
     """A decorator that makes a new dict_cache using function provided as value getter"""
     return DictCache(weakref.WeakValueDictionary(), get_func)
 
 
-def dict_cache(get_func: Callable[[Any], Any]) -> DictCache:
+def dict_cache(get_func: Callable[[K], V]) -> DictCache[K, V]:
     """Generic dict cache decorator"""
     return DictCache({}, get_func)

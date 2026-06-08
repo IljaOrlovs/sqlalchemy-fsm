@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 from functools import partial
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 import sqlalchemy.event
 import sqlalchemy.orm.events
 from sqlalchemy.orm.instrumentation import register_class
+
+T = TypeVar("T")
 
 
 @sqlalchemy.event.dispatcher
@@ -21,15 +23,15 @@ class FSMSchemaEvents(sqlalchemy.orm.events.InstanceEvents):
 
 
 @dataclass(slots=True)
-class InstanceRef:
+class InstanceRef(Generic[T]):
     """This class has to be passed to the dispatch call as instance.
 
     No idea why it is required.
     """
 
-    target: Any
+    target: T
 
-    def obj(self) -> Any:
+    def obj(self) -> T:
         return self.target
 
 
