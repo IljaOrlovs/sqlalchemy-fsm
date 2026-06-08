@@ -4,6 +4,7 @@ Non-meta objects that are bound to a particular table & sqlalchemy instance.
 
 import inspect as py_inspect
 import warnings
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,7 +15,7 @@ from .sqltypes import FSMField
 
 
 @cache.weak_value_cache
-def column_cache(table_class):
+def column_cache(table_class: type) -> Any:
     fsm_fields = [
         col for col in sqla_inspect(table_class).columns if isinstance(col.type, FSMField)
     ]
@@ -34,7 +35,7 @@ class SqlAlchemyHandle:
     column_name: str = field(init=False)
     dispatch: Any = field(init=False, default=None)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.fsm_column = column_cache.get_value(self.table_class)
         self.column_name = self.fsm_column.name
         if self.record:
@@ -44,34 +45,56 @@ class SqlAlchemyHandle:
 class BoundFSMBase:
     __slots__ = ("extra_call_args", "meta", "sqla_handle")
 
-    def __init__(self, meta, sqla_handle, extra_call_args):
+    def __init__(
+        self,
+        meta: "meta.FSMMeta",
+        sqla_handle: SqlAlchemyHandle,
+        extra_call_args: tuple[Any, ...],
+    ) -> None:
         self.meta = meta
         self.sqla_handle = sqla_handle
         self.extra_call_args = extra_call_args
 
     @property
-    def target_state(self):
+    def target_state(self) -> str | None:
         return self.meta.target
 
     @property
-    def current_state(self):
+    def current_state(self) -> str | None:
         return getattr(self.sqla_handle.record, self.sqla_handle.column_name)
 
-    def transition_possible(self):
+    def transition_possible(self) -> bool:
         return ("*" in self.meta.sources) or (self.current_state in self.meta.sources)
+
+    def conditions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
+        raise NotImplementedError
+
+    def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
+        raise NotImplementedError
 
 
 class BoundFSMFunction(BoundFSMBase):
     __slots__ = (*BoundFSMBase.__slots__, "set_func", "my_args")
 
-    def __init__(self, meta, sqla_handle, set_func, extra_call_args):
+    def __init__(
+        self,
+        meta: "meta.FSMMeta",
+        sqla_handle: SqlAlchemyHandle,
+        set_func: Callable[..., Any],
+        extra_call_args: tuple[Any, ...],
+    ) -> None:
         super().__init__(meta, sqla_handle, extra_call_args)
         self.set_func = set_func
         self.my_args = (
             self.meta.extra_call_args + self.extra_call_args + (self.sqla_handle.record,)
         )
 
-    def get_call_iface_error(self, fn, args, kwargs):
+    def get_call_iface_error(
+        self,
+        fn: Callable[..., Any],
+        args: Iterable[Any],
+        kwargs: Mapping[str, Any],
+    ) -> TypeError | None:
         """Returns 'Type' error describing function's api mismatch (if one exists)
 
         or None
@@ -82,7 +105,7 @@ class BoundFSMFunction(BoundFSMBase):
             return err
         return None
 
-    def conditions_met(self, args, kwargs):
+    def conditions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
         conditions = self.meta.conditions
         if not conditions:
             # Performance - skip the check
@@ -121,7 +144,7 @@ class BoundFSMFunction(BoundFSMBase):
                     )
         return out
 
-    def to_next_state(self, args, kwargs):
+    def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
         old_state = self.current_state
         new_state = self.target_state
 
@@ -135,7 +158,7 @@ class BoundFSMFunction(BoundFSMBase):
         setattr(sqla_target, self.sqla_handle.column_name, new_state)
         self.sqla_handle.dispatch.after_state_change(source=old_state, target=new_state)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             f"<{self.__class__.__name__} meta={self.meta!r} "
             f"instance={self.sqla_handle!r} function={self.set_func!r}>"
@@ -149,7 +172,7 @@ class TransitionStateArithmetics:
     meta_a: "meta.FSMMeta"
     meta_b: "meta.FSMMeta"
 
-    def source_intersection(self):
+    def source_intersection(self) -> frozenset[str | None] | bool:
         """Returns intersected sources meta sources."""
         sources_a = self.meta_a.sources
         sources_b = self.meta_b.sources
@@ -163,7 +186,7 @@ class TransitionStateArithmetics:
         else:
             return False
 
-    def target_intersection(self):
+    def target_intersection(self) -> str | None:
         target_a = self.meta_a.target
         target_b = self.meta_b.target
         if target_a == target_b:
@@ -177,21 +200,20 @@ class TransitionStateArithmetics:
             out = None
         return out
 
-    def joint_conditions(self):
+    def joint_conditions(self) -> tuple[Callable[..., Any], ...]:
         """Returns union of both conditions."""
         return self.meta_a.conditions + self.meta_b.conditions
 
-    def joint_args(self):
+    def joint_args(self) -> tuple[Any, ...]:
         return self.meta_a.extra_call_args + self.meta_b.extra_call_args
 
 
 @cache.dict_cache
-def inherited_bound_classes(key):
-
+def inherited_bound_classes(key: tuple[type, "meta.FSMMeta"]) -> type:
     (child_cls, parent_meta) = key
 
-    def _get_sub_transitions(child_cls):
-        sub_handlers = []
+    def _get_sub_transitions(child_cls: type) -> list[tuple[str, Any]]:
+        sub_handlers: list[tuple[str, Any]] = []
         for name in dir(child_cls):
             try:
                 attr = getattr(child_cls, name)
@@ -202,7 +224,11 @@ def inherited_bound_classes(key):
                 continue
         return sub_handlers
 
-    def _get_bound_sub_metas(child_cls, sub_transitions, parent_meta):
+    def _get_bound_sub_metas(
+        child_cls: type,
+        sub_transitions: list[tuple[str, Any]],
+        parent_meta: "meta.FSMMeta",
+    ) -> list[tuple["meta.FSMMeta", Callable[..., Any]]]:
         out = []
 
         for _name, transition in sub_transitions:
@@ -253,19 +279,25 @@ def inherited_bound_classes(key):
 class BoundFSMClass(BoundFSMBase):
     __slots__ = (*BoundFSMBase.__slots__, "bound_sub_metas", "_target_cached")
 
-    def __init__(self, meta, sqlalchemy_handle, child_cls, extra_call_args):
+    def __init__(
+        self,
+        meta: "meta.FSMMeta",
+        sqlalchemy_handle: SqlAlchemyHandle,
+        child_cls: type,
+        extra_call_args: tuple[Any, ...],
+    ) -> None:
         super().__init__(meta, sqlalchemy_handle, extra_call_args)
         child_cls = inherited_bound_classes.get_value((child_cls, meta))
         child_object = child_cls()
         child_object._sa_fsm_sqlalchemy_handle = sqlalchemy_handle
-        self.bound_sub_metas = [
+        self.bound_sub_metas: list[BoundFSMBase] = [
             meta.get_bound(sqlalchemy_handle, set_fn, (child_object,))
             for (meta, set_fn) in child_object._sa_fsm_sqlalchemy_metas
         ]
-        self._target_cached = None
+        self._target_cached: str | None = None
 
     @property
-    def target_state(self):
+    def target_state(self) -> str | None:
         if self._target_cached is None:
             targets = tuple({meta.meta.target for meta in self.bound_sub_metas})
             if len(targets) != 1:
@@ -275,16 +307,16 @@ class BoundFSMClass(BoundFSMBase):
             self._target_cached = targets[0]
         return self._target_cached
 
-    def transition_possible(self):
+    def transition_possible(self) -> bool:
         return any(sub.transition_possible() for sub in self.bound_sub_metas)
 
-    def conditions_met(self, args, kwargs):
+    def conditions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
         return any(
             sub.transition_possible() and sub.conditions_met(args, kwargs)
             for sub in self.bound_sub_metas
         )
 
-    def to_next_state(self, args, kwargs):
+    def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
         can_transition_with = [
             sub
             for sub in self.bound_sub_metas

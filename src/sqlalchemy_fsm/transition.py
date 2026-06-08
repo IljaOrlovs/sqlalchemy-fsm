@@ -24,7 +24,7 @@ SourceState = str | None | Iterable[str | None]
 
 
 @cache.dict_cache
-def sql_equality_cache(key):
+def sql_equality_cache(key: tuple[Any, str | None]) -> Any:
     """It takes a bit of time for sqlalchemy to generate these.
 
     So I'm caching them.
@@ -43,19 +43,25 @@ class ClassBoundFsmTransition:
         "_sa_fsm_transition_fn",
     )
 
-    def __init__(self, meta, sqla_handle, payload_func, owner_cls):
+    def __init__(
+        self,
+        meta: FSMMeta,
+        sqla_handle: "bound.SqlAlchemyHandle",
+        payload_func: Callable[..., Any],
+        owner_cls: type,
+    ) -> None:
         self._sa_fsm_meta = meta
         self._sa_fsm_owner_cls = owner_cls
         self._sa_fsm_sqla_handle = sqla_handle
         self._sa_fsm_transition_fn = payload_func
 
-    def __call__(self):
+    def __call__(self) -> Any:
         """Return a SQLAlchemy filter for this particular state."""
         column = self._sa_fsm_sqla_handle.fsm_column
         target = self._sa_fsm_meta.target
         return sql_equality_cache.get_value((column, target))
 
-    def is_(self, value):
+    def is_(self, value: Any) -> Any:
         if isinstance(value, bool):
             out = self().is_(value)
         else:
@@ -68,19 +74,26 @@ class ClassBoundFsmTransition:
 class InstanceBoundFsmTransition:
     __slots__ = (*ClassBoundFsmTransition.__slots__, "_sa_fsm_self", "_sa_fsm_bound_meta")
 
-    def __init__(self, meta, sqla_handle, transition_fn, owner_cls, instance):
+    def __init__(
+        self,
+        meta: FSMMeta,
+        sqla_handle: "bound.SqlAlchemyHandle",
+        transition_fn: Callable[..., Any],
+        owner_cls: type,
+        instance: Any,
+    ) -> None:
         self._sa_fsm_meta = meta
         self._sa_fsm_transition_fn = transition_fn
         self._sa_fsm_owner_cls = owner_cls
         self._sa_fsm_self = instance
         self._sa_fsm_bound_meta = meta.get_bound(sqla_handle, transition_fn, ())
 
-    def __call__(self):
+    def __call__(self) -> bool:
         """Check if this is the current state of the object."""
         bound_meta = self._sa_fsm_bound_meta
         return bound_meta.target_state == bound_meta.current_state
 
-    def set(self, *args, **kwargs):
+    def set(self, *args: Any, **kwargs: Any) -> None:
         """Transition the FSM to this new state."""
         bound_meta = self._sa_fsm_bound_meta
         func = self._sa_fsm_transition_fn
@@ -94,7 +107,7 @@ class InstanceBoundFsmTransition:
             raise exc.PreconditionError("Preconditions are not satisfied.")
         return bound_meta.to_next_state(args, kwargs)
 
-    def can_proceed(self, *args, **kwargs):
+    def can_proceed(self, *args: Any, **kwargs: Any) -> bool:
         bound_meta = self._sa_fsm_bound_meta
         return bound_meta.transition_possible() and bound_meta.conditions_met(
             args, kwargs
@@ -106,7 +119,7 @@ class FsmTransition(InspectionAttrInfo):
     extension_type = HYBRID_METHOD
     _sa_fsm_is_transition = True
 
-    def __init__(self, meta, set_function):
+    def __init__(self, meta: FSMMeta, set_function: Callable[..., Any]) -> None:
         self.meta = meta
         self.set_fn = set_function
 
@@ -115,7 +128,9 @@ class FsmTransition(InspectionAttrInfo):
     @overload
     def __get__(self, instance: object, owner: type) -> InstanceBoundFsmTransition: ...
 
-    def __get__(self, instance, owner):
+    def __get__(
+        self, instance: Any, owner: type
+    ) -> "ClassBoundFsmTransition | InstanceBoundFsmTransition":
         try:
             sql_alchemy_handle = owner._sa_fsm_sqlalchemy_handle
         except AttributeError:
@@ -137,7 +152,7 @@ def transition(
     target: str | None = None,
     conditions: Iterable[Callable[..., Any]] = (),
 ) -> Callable[[Any], FsmTransition]:
-    def inner_transition(subject):
+    def inner_transition(subject: Any) -> FsmTransition:
         if py_inspect.isfunction(subject):
             meta = FSMMeta(source, target, conditions, (), bound.BoundFSMFunction)
         elif py_inspect.isclass(subject):
