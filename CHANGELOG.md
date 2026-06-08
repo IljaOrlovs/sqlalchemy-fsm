@@ -22,8 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   No runtime change — `@transition` was already async-safe — but the
   README now documents the supported usage.
 
+- `sqlalchemy_fsm.extras.alembic` — render and autogenerate `CHECK` constraints
+  for FSM-managed columns. `attach_fsm_constraints(Base)` accepts a declarative
+  base, a `registry`, or an iterable of mapped classes; `register_autogenerate_comparator()`
+  hooks Alembic's autogenerate to emit drop/add ops when the legal state set
+  changes. Available as an optional install: `pip install sqlalchemy-fsm[alembic]`.
+
 ### Internal
-- Dev deps gain `pytest-asyncio`, `aiosqlite`, and `greenlet` for async tests.
+- Dev deps gain `pytest-asyncio`, `aiosqlite`, `greenlet`, and `alembic` for
+  async + Alembic integration tests.
 
 ## [2.2.0] - 2026-06-08
 

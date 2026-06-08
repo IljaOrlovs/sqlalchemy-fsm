@@ -47,6 +47,9 @@ dependencies = [
     "SQLAlchemy>=1.4",
 ]
 
+[project.optional-dependencies]
+alembic = ["alembic>=1.13"]
+
 [project.urls]
 Homepage = "https://github.com/IljaOrlovs/sqlalchemy-fsm"
 Documentation = "https://github.com/IljaOrlovs/sqlalchemy-fsm#readme"
@@ -67,6 +70,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "aiosqlite>=0.19",
     "greenlet>=3.0",
+    "alembic>=1.18.4",
 ]
 
 [build-system]
@@ -123,6 +127,9 @@ ignore = ["N802", "N818"]
     "F401",
     "E402",
 ]
+# `Base` is the canonical SA declarative-base name; local Base inside test
+# helpers is idiomatic, so silence N806 there.
+"tests/*" = ["N806"]
 
 [tool.ruff.lint.isort]
 order-by-type = true
