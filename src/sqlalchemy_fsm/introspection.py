@@ -62,7 +62,7 @@ def collect_transition_states(model_cls: type) -> set[str]:
     for _, fsm_t in iter_transitions(model_cls):
         meta = fsm_t.meta
         states |= _concrete_states_from_meta(meta)
-        if meta.bound_cls is _bound.BoundFSMClass and isinstance(fsm_t.set_fn, type):
+        if issubclass(meta.bound_cls, _bound.BoundFSMClass) and isinstance(fsm_t.set_fn, type):
             for _, sub in iter_transitions(fsm_t.set_fn):
                 states |= _concrete_states_from_meta(sub.meta)
     return states
@@ -78,7 +78,7 @@ def collect_edges(model_cls: type) -> list[TransitionEdge]:
     edges: list[TransitionEdge] = []
     for name, fsm_t in iter_transitions(model_cls):
         meta = fsm_t.meta
-        if meta.bound_cls is _bound.BoundFSMClass and isinstance(fsm_t.set_fn, type):
+        if issubclass(meta.bound_cls, _bound.BoundFSMClass) and isinstance(fsm_t.set_fn, type):
             edges.extend(_edges_from_class_group(name, meta, fsm_t.set_fn))
         else:
             edges.extend(_edges_from_meta(name, meta))

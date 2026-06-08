@@ -25,10 +25,12 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 )
 from sqlalchemy.orm import declarative_base  # noqa: E402
 
-from sqlalchemy_fsm import FSMField, transition  # noqa: E402
+from sqlalchemy_fsm import FSMField, async_transition, transition  # noqa: E402
 from sqlalchemy_fsm.exc import (  # noqa: E402
     InvalidSourceStateError,
     PermissionDeniedError,
+    PreconditionError,
+    SetupError,
 )
 
 AsyncBase = declarative_base()
@@ -158,3 +160,174 @@ class TestAsyncPermissions:
         await async_session.commit()
         await async_session.refresh(doc)
         assert str(doc.state) == "archived"
+
+
+# --- async_transition coverage -------------------------------------------------
+
+
+async def _async_can_publish(instance, **_):
+    return True
+
+
+async def _async_is_editor(instance, user=None, **_):
+    return getattr(user, "role", None) == "editor"
+
+
+class AsyncHandlerDoc(AsyncBase):
+    __tablename__ = "AsyncHandlerDoc"
+    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+    state = sqlalchemy.Column(FSMField)
+    side_effect: list = []
+
+    def __init__(self, *a, **kw):
+        self.state = "draft"
+        super().__init__(*a, **kw)
+
+    @async_transition(source="draft", target="published", conditions=[_async_can_publish])
+    async def publish(self):
+        type(self).side_effect.append("published")
+
+    @async_transition(
+        source="draft", target="archived", permissions=[_async_is_editor]
+    )
+    async def archive(self, user=None):
+        type(self).side_effect.append("archived")
+
+    # Mixing sync callables in an async transition is allowed.
+    @async_transition(source="published", target="retracted", conditions=[can_publish])
+    def retract(self):  # sync handler under async_transition is fine
+        type(self).side_effect.append("retracted")
+
+
+@pytest_asyncio.fixture
+async def async_handler_session():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(AsyncBase.metadata.create_all)
+    sf = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with sf() as session:
+        AsyncHandlerDoc.side_effect = []
+        yield session
+    await engine.dispose()
+
+
+class TestAsyncTransition:
+    async def test_async_handler_runs_and_state_persists(self, async_handler_session):
+        doc = AsyncHandlerDoc()
+        async_handler_session.add(doc)
+        await async_handler_session.commit()
+
+        await doc.publish.aset()
+        assert AsyncHandlerDoc.side_effect == ["published"]
+        assert str(doc.state) == "published"
+
+        await async_handler_session.commit()
+        await async_handler_session.refresh(doc)
+        assert str(doc.state) == "published"
+
+    async def test_async_permission_denied_propagates(self, async_handler_session):
+        doc = AsyncHandlerDoc()
+        async_handler_session.add(doc)
+        with pytest.raises(PermissionDeniedError):
+            await doc.archive.aset()
+        assert str(doc.state) == "draft"
+
+    async def test_async_permission_allowed(self, async_handler_session):
+        class _Editor:
+            role = "editor"
+
+        doc = AsyncHandlerDoc()
+        async_handler_session.add(doc)
+        await doc.archive.aset(user=_Editor())
+        assert str(doc.state) == "archived"
+
+    async def test_async_invalid_source_raises(self, async_handler_session):
+        doc = AsyncHandlerDoc()
+        async_handler_session.add(doc)
+        await doc.publish.aset()
+        with pytest.raises(InvalidSourceStateError):
+            await doc.publish.aset()
+
+    async def test_async_can_proceed(self, async_handler_session):
+        doc = AsyncHandlerDoc()
+        async_handler_session.add(doc)
+        assert await doc.publish.acan_proceed() is True
+        await doc.publish.aset()
+        assert await doc.publish.acan_proceed() is False
+
+    async def test_sync_callable_under_async_transition(self, async_handler_session):
+        doc = AsyncHandlerDoc()
+        async_handler_session.add(doc)
+        await doc.publish.aset()
+        await doc.retract.aset()
+        assert str(doc.state) == "retracted"
+        assert AsyncHandlerDoc.side_effect == ["published", "retracted"]
+
+    async def test_failed_async_condition_raises(self, async_handler_session):
+        async def _never(instance, **_):
+            return False
+
+        class _Doc(AsyncBase):
+            __tablename__ = "AsyncCondDoc"
+            id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+            state = sqlalchemy.Column(FSMField)
+
+            def __init__(self, *a, **kw):
+                self.state = "draft"
+                super().__init__(*a, **kw)
+
+            @async_transition(
+                source="draft", target="published", conditions=[_never]
+            )
+            async def publish(self):
+                pass
+
+        async with async_handler_session.bind.begin() as conn:
+            await conn.run_sync(_Doc.__table__.create)
+
+        doc = _Doc()
+        async_handler_session.add(doc)
+        with pytest.raises(PreconditionError):
+            await doc.publish.aset()
+
+
+class TestAsyncTransitionGuards:
+    def test_aset_outside_loop_raises(self):
+        doc = AsyncHandlerDoc()
+        # No running loop → SetupError. The descriptor itself is reached
+        # synchronously; calling aset() must build a coroutine, so we
+        # invoke it via send() to exercise the guard without awaiting.
+        coro = doc.publish.aset()
+        try:
+            with pytest.raises(SetupError):
+                coro.send(None)
+        finally:
+            coro.close()
+
+    def test_set_on_async_transition_missing(self):
+        doc = AsyncHandlerDoc()
+        # AsyncInstanceBoundFsmTransition has no `.set`.
+        assert not hasattr(doc.publish, "set")
+
+
+class TestAsyncClassTransitionMixingForbidden:
+    def test_mixing_sync_and_async_subhandlers_errors(self):
+        with pytest.raises(SetupError):
+
+            class _Bad(AsyncBase):
+                __tablename__ = "AsyncMixedDoc"
+                id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+                state = sqlalchemy.Column(FSMField)
+
+                def __init__(self, *a, **kw):
+                    self.state = "draft"
+                    super().__init__(*a, **kw)
+
+                @async_transition(source="*", target="done")
+                class go:  # noqa: N801
+                    @transition(source="draft")  # sync sub under async parent
+                    def from_draft(self):
+                        pass
+
+            # Touching the descriptor triggers the merge.
+            _Bad().go.acan_proceed

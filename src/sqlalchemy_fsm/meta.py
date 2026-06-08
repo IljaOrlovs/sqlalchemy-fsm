@@ -12,6 +12,7 @@ class FSMMeta:
         "bound_cls",
         "conditions",
         "extra_call_args",
+        "is_async",
         "permissions",
         "sources",
         "target",
@@ -23,6 +24,7 @@ class FSMMeta:
     extra_call_args: tuple[Any, ...]
     sources: frozenset[str | None]
     target: str | None
+    is_async: bool
 
     def __init__(
         self,
@@ -32,8 +34,10 @@ class FSMMeta:
         extra_args: Iterable[Any],
         bound_cls: type,
         permissions: Iterable[Callable[..., Any]] = (),
+        is_async: bool = False,
     ) -> None:
         self.bound_cls = bound_cls
+        self.is_async = is_async
         self.conditions = tuple(conditions)
         self.permissions = tuple(permissions)
         self.extra_call_args = tuple(extra_args)

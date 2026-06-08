@@ -1,5 +1,6 @@
 """The `@transition` decorator and the descriptor it produces."""
 
+import asyncio
 import inspect as py_inspect
 import warnings
 from collections.abc import Callable, Iterable
@@ -118,6 +119,79 @@ class InstanceBoundFsmTransition:
         )
 
 
+class AsyncInstanceBoundFsmTransition:
+    """Async sibling of `InstanceBoundFsmTransition`. Exposes only `aset`
+    and `acan_proceed` — calling them outside a running event loop raises."""
+
+    __slots__ = (
+        "_sa_fsm_bound_meta",
+        "_sa_fsm_meta",
+        "_sa_fsm_owner_cls",
+        "_sa_fsm_self",
+        "_sa_fsm_sqla_handle",
+        "_sa_fsm_transition_fn",
+    )
+
+    def __init__(
+        self,
+        meta: FSMMeta,
+        sqla_handle: "bound.SqlAlchemyHandle",
+        transition_fn: Callable[..., Any],
+        owner_cls: type,
+        instance: Any,
+    ) -> None:
+        self._sa_fsm_meta = meta
+        self._sa_fsm_transition_fn = transition_fn
+        self._sa_fsm_owner_cls = owner_cls
+        self._sa_fsm_self = instance
+        self._sa_fsm_sqla_handle = sqla_handle
+        self._sa_fsm_bound_meta = meta.get_bound(sqla_handle, transition_fn, ())
+
+    def __call__(self) -> bool:
+        bound_meta = self._sa_fsm_bound_meta
+        return bound_meta.target_state == bound_meta.current_state
+
+    @staticmethod
+    def _require_running_loop() -> None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError as err:
+            raise exc.SetupError(
+                "async transitions require a running asyncio event loop; "
+                "call `aset()`/`acan_proceed()` from inside an async function"
+            ) from err
+
+    async def aset(self, *args: Any, **kwargs: Any) -> None:
+        """Execute an async transition. Awaits async handlers, conditions,
+        and permissions. Mutates the field in memory — commit the session
+        yourself to persist."""
+        self._require_running_loop()
+        bound_meta = self._sa_fsm_bound_meta
+        func = self._sa_fsm_transition_fn
+
+        if not bound_meta.transition_possible():
+            raise exc.InvalidSourceStateError(
+                f"Unable to switch from {bound_meta.current_state} "
+                f"using method {func.__name__}"
+            )
+        if not await bound_meta.apermissions_met(args, kwargs):
+            raise exc.PermissionDeniedError(
+                f"Permission denied for transition {func.__name__}."
+            )
+        if not await bound_meta.aconditions_met(args, kwargs):
+            raise exc.PreconditionError("Preconditions are not satisfied.")
+        return await bound_meta.ato_next_state(args, kwargs)
+
+    async def acan_proceed(self, *args: Any, **kwargs: Any) -> bool:
+        self._require_running_loop()
+        bound_meta = self._sa_fsm_bound_meta
+        return (
+            bound_meta.transition_possible()
+            and await bound_meta.apermissions_met(args, kwargs)
+            and await bound_meta.aconditions_met(args, kwargs)
+        )
+
+
 class FsmTransition(InspectionAttrInfo):
     is_attribute = True
     extension_type = HYBRID_METHOD
@@ -130,20 +204,25 @@ class FsmTransition(InspectionAttrInfo):
     @overload
     def __get__(self, instance: None, owner: type) -> ClassBoundFsmTransition: ...
     @overload
-    def __get__(self, instance: object, owner: type) -> InstanceBoundFsmTransition: ...
+    def __get__(
+        self, instance: object, owner: type
+    ) -> "InstanceBoundFsmTransition | AsyncInstanceBoundFsmTransition": ...
 
     def __get__(
         self, instance: Any, owner: type
-    ) -> "ClassBoundFsmTransition | InstanceBoundFsmTransition":
+    ) -> "ClassBoundFsmTransition | InstanceBoundFsmTransition | AsyncInstanceBoundFsmTransition":
         try:
             sql_alchemy_handle = owner._sa_fsm_sqlalchemy_handle
         except AttributeError:
-            # Owner class is not bound to sqlalchemy handle object
             sql_alchemy_handle = bound.SqlAlchemyHandle(owner, instance)
 
         if instance is None:
             return ClassBoundFsmTransition(
                 self.meta, sql_alchemy_handle, self.set_fn, owner
+            )
+        if self.meta.is_async:
+            return AsyncInstanceBoundFsmTransition(
+                self.meta, sql_alchemy_handle, self.set_fn, owner, instance
             )
         return InstanceBoundFsmTransition(
             self.meta, sql_alchemy_handle, self.set_fn, owner, instance
@@ -172,3 +251,42 @@ def transition(
         return FsmTransition(meta, subject)
 
     return inner_transition
+
+
+def async_transition(
+    source: SourceState = "*",
+    target: str | None = None,
+    conditions: Iterable[Callable[..., Any]] = (),
+    permissions: Iterable[Callable[..., Any]] = (),
+) -> Callable[[Any], FsmTransition]:
+    """Like `@transition`, but the handler — and any conditions/permissions —
+    may be `async def`. Invoke via `await instance.<name>.aset(...)`; only
+    works inside a running asyncio event loop. Sync callables remain valid."""
+
+    def inner(subject: Any) -> FsmTransition:
+        if py_inspect.isfunction(subject):
+            meta = FSMMeta(
+                source,
+                target,
+                conditions,
+                (),
+                bound.AsyncBoundFSMFunction,
+                permissions,
+                is_async=True,
+            )
+        elif py_inspect.isclass(subject):
+            meta = FSMMeta(
+                source,
+                target,
+                conditions,
+                (),
+                bound.AsyncBoundFSMClass,
+                permissions,
+                is_async=True,
+            )
+        else:
+            raise NotImplementedError(f"Do not know how to {subject!r}")
+
+        return FsmTransition(meta, subject)
+
+    return inner

@@ -174,6 +174,84 @@ class BoundFSMFunction(BoundFSMBase):
         )
 
 
+class AsyncBoundFSMFunction(BoundFSMFunction):
+    """Async-aware variant: callables may be `async def` and are awaited."""
+
+    __slots__ = ()
+
+    async def _aeval_callables(
+        self,
+        callables: tuple[Callable[..., Any], ...],
+        args: Iterable[Any],
+        kwargs: Mapping[str, Any],
+    ) -> bool:
+        if not callables:
+            return True
+        for fn in callables:
+            if self.get_call_iface_error(fn, args, kwargs):
+                return False
+            result = fn(*args, **kwargs)
+            if py_inspect.iscoroutine(result):
+                result = await result
+            if not result:
+                return False
+        return True
+
+    async def aconditions_met(
+        self, args: Iterable[Any], kwargs: Mapping[str, Any]
+    ) -> bool:
+        conditions = self.meta.conditions
+        if not conditions:
+            return True
+
+        merged_args = self.my_args + tuple(args)
+        merged_kwargs = dict(kwargs)
+
+        out = await self._aeval_callables(conditions, merged_args, merged_kwargs)
+
+        if out:
+            err = self.get_call_iface_error(self.set_func, merged_args, merged_kwargs)
+            if err:
+                warnings.warn(
+                    f"Failure to validate handler call args: {err}",
+                    stacklevel=2,
+                )
+                raise exc.SetupError(
+                    "Mismatch between args accepted by preconditions "
+                    f"({self.meta.conditions!r}) & handler ({self.set_func!r})"
+                )
+        return out
+
+    async def apermissions_met(
+        self, args: Iterable[Any], kwargs: Mapping[str, Any]
+    ) -> bool:
+        permissions = self.meta.permissions
+        if not permissions:
+            return True
+        merged_args = self.my_args + tuple(args)
+        return await self._aeval_callables(permissions, merged_args, dict(kwargs))
+
+    async def ato_next_state(
+        self, args: Iterable[Any], kwargs: Mapping[str, Any]
+    ) -> None:
+        old_state = self.current_state
+        new_state = self.target_state
+
+        sqla_target = self.sqla_handle.record
+        args = self.my_args + tuple(args)
+
+        self.sqla_handle.dispatch.before_state_change(source=old_state, target=new_state)
+
+        result = self.set_func(*args, **kwargs)
+        if py_inspect.iscoroutine(result):
+            await result
+        setattr(sqla_target, self.sqla_handle.column_name, new_state)
+        self.sqla_handle.dispatch.after_state_change(source=old_state, target=new_state)
+
+    def transition_possible_async(self) -> bool:
+        return self.transition_possible()
+
+
 @dataclass(slots=True)
 class TransitionStateArithmetics:
     """Merge a parent class-transition meta with a child handler meta.
@@ -261,6 +339,12 @@ def inherited_bound_classes(key: tuple[type, "meta.FSMMeta"]) -> type:
                     f"{sub_meta.target} are not compatible"
                 )
 
+            if parent_meta.is_async != sub_meta.is_async:
+                raise exc.SetupError(
+                    f"Cannot mix sync and async sub-handlers under a "
+                    f"{'async' if parent_meta.is_async else 'sync'} class transition "
+                    f"(sub={transition._sa_fsm_transition_fn!r})"
+                )
             merged_sub_meta = meta.FSMMeta(
                 sub_sources,
                 sub_target,
@@ -268,6 +352,7 @@ def inherited_bound_classes(key: tuple[type, "meta.FSMMeta"]) -> type:
                 arithmetics.joint_args(),
                 sub_meta.bound_cls,
                 arithmetics.joint_permissions(),
+                is_async=sub_meta.is_async,
             )
             out.append((merged_sub_meta, transition._sa_fsm_transition_fn))
 
@@ -354,3 +439,46 @@ class BoundFSMClass(BoundFSMBase):
                 "No sub-transition is currently applicable."
             )
         return can_transition_with[0].to_next_state(args, kwargs)
+
+
+class AsyncBoundFSMClass(BoundFSMClass):
+    """Class-transition variant where every sub-handler is async."""
+
+    __slots__ = ()
+
+    async def aconditions_met(
+        self, args: Iterable[Any], kwargs: Mapping[str, Any]
+    ) -> bool:
+        for sub in self.bound_sub_metas:
+            if sub.transition_possible() and await sub.aconditions_met(args, kwargs):
+                return True
+        return False
+
+    async def apermissions_met(
+        self, args: Iterable[Any], kwargs: Mapping[str, Any]
+    ) -> bool:
+        for sub in self.bound_sub_metas:
+            if sub.transition_possible() and await sub.apermissions_met(args, kwargs):
+                return True
+        return False
+
+    async def ato_next_state(
+        self, args: Iterable[Any], kwargs: Mapping[str, Any]
+    ) -> None:
+        applicable: list[AsyncBoundFSMFunction] = []
+        for sub in self.bound_sub_metas:
+            if (
+                sub.transition_possible()
+                and await sub.apermissions_met(args, kwargs)
+                and await sub.aconditions_met(args, kwargs)
+            ):
+                applicable.append(sub)
+        if len(applicable) > 1:
+            raise exc.SetupError(
+                f"Can transition with multiple handlers ({applicable})"
+            )
+        if not applicable:
+            raise exc.InvalidSourceStateError(
+                "No sub-transition is currently applicable."
+            )
+        return await applicable[0].ato_next_state(args, kwargs)
