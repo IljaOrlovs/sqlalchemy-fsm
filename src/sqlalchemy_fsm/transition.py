@@ -11,7 +11,7 @@ try:
     from sqlalchemy.ext.hybrid import HybridExtensionType
 
     HYBRID_METHOD = HybridExtensionType.HYBRID_METHOD
-except ImportError:
+except ImportError:  # pragma: no cover
     # SQLAlchemy 1.x
     from sqlalchemy.ext.hybrid import (
         HYBRID_METHOD,  # pyright: ignore[reportAttributeAccessIssue]

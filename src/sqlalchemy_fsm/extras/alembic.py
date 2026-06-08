@@ -66,7 +66,7 @@ else:
 
 
 def _require_alembic() -> None:
-    if not _ALEMBIC_AVAILABLE:
+    if not _ALEMBIC_AVAILABLE:  # pragma: no cover - alembic is a test dependency
         raise RuntimeError(
             "alembic is not installed. Install with: pip install sqlalchemy-fsm[alembic]"
         ) from _ALEMBIC_IMPORT_ERR
@@ -173,13 +173,81 @@ def attach_fsm_constraints(source: Any) -> list[CheckConstraint]:
 
 # --- alembic autogenerate comparator ---------------------------------------
 
+def compare_fsm_check(
+    autogen_context: Any,
+    modify_table_ops: Any,
+    schema: Any,
+    table_name: str,
+    conn_table: Table | None,
+    metadata_table: Table | None,
+) -> None:
+    """Comparator body — exposed so it can be unit-tested directly.
+
+    `metadata_table` is the model-side table (may be None if the table only
+    exists in the DB). `conn_table` is the DB-reflected table (may be None
+    if newly added). For brand-new tables (`conn_table is None`) the
+    constraint is already inside the emitted `CreateTableOp`; nothing to
+    compare. For dropped tables (`metadata_table is None`) the
+    `DropTableOp` carries the cascade; also nothing to compare.
+    """
+    if conn_table is None or metadata_table is None:
+        return
+    if not _table_has_fsm_column(metadata_table):
+        return
+
+    column = next(
+        c.name for c in metadata_table.columns if isinstance(c.type, FSMField)
+    )
+    expected_name = fsm_check_name(table_name, column)
+
+    expected = next(
+        (
+            c
+            for c in metadata_table.constraints
+            if isinstance(c, CheckConstraint) and c.name == expected_name
+        ),
+        None,
+    )
+
+    insp: Inspector = autogen_context.inspector
+    try:
+        db_checks = insp.get_check_constraints(table_name)
+    except NotImplementedError:
+        return
+    db = next((c for c in db_checks if c.get("name") == expected_name), None)
+
+    if expected is None and db is None:
+        return
+    if (
+        expected is not None
+        and db is not None
+        and _normalize_sqltext(str(expected.sqltext))
+        == _normalize_sqltext(db.get("sqltext", ""))
+    ):
+        return  # in sync
+
+    if db is not None:
+        # Build a placeholder Constraint for the to-be-dropped CHECK so
+        # alembic's reversibility helpers can render it. The SQL text
+        # comes from the DB inspection, the name matches.
+        old_constraint = CheckConstraint(db.get("sqltext", ""), name=expected_name)
+        # Attach to a transient Table so the constraint has a table
+        # reference (required by alembic's renderer).
+        old_constraint._set_parent(metadata_table)  # type: ignore[attr-defined]
+        modify_table_ops.ops.append(
+            _ops.DropConstraintOp.from_constraint(old_constraint)
+        )
+        # Detach so we don't leave the placeholder on the metadata table.
+        metadata_table.constraints.discard(old_constraint)
+    if expected is not None:
+        modify_table_ops.ops.append(_ops.AddConstraintOp.from_constraint(expected))
+
+
 _COMPARATOR_REGISTERED = False
 
 
-def register_autogenerate_comparator() -> None:  # noqa: C901
-    """Register a `comparators.dispatch_for('table')` hook that detects
-    drift between the model's expected FSM CHECK constraint and what's in
-    the database, emitting `DropConstraintOp` / `AddConstraintOp` directives.
+def register_autogenerate_comparator() -> None:
+    """Register `compare_fsm_check` with alembic's `'table'` dispatch.
 
     Safe to call multiple times — only the first call has any effect.
     """
@@ -190,77 +258,7 @@ def register_autogenerate_comparator() -> None:  # noqa: C901
         return
     _COMPARATOR_REGISTERED = True
 
-    @_comparators.dispatch_for("table")
-    def _compare_fsm_check(
-        autogen_context: Any,
-        modify_table_ops: Any,
-        schema: Any,
-        table_name: str,
-        conn_table: Table | None,
-        metadata_table: Table | None,
-    ) -> None:
-        # `metadata_table` is the model-side table (may be None if the table
-        # only exists in the DB). `conn_table` is the DB-reflected table
-        # (may be None if newly added). We act when the model side has an
-        # FSM column.
-        # For brand-new tables (conn_table is None) the constraint is
-        # already inside the emitted CreateTableOp; nothing to compare.
-        # For dropped tables (metadata_table is None) the DropTableOp
-        # carries the cascade; also nothing to compare.
-        if conn_table is None or metadata_table is None:
-            return
-        table = metadata_table
-        if not _table_has_fsm_column(table):
-            return
-
-        column = next(c.name for c in table.columns if isinstance(c.type, FSMField))
-        expected_name = fsm_check_name(table_name, column)
-
-        expected = None
-        if metadata_table is not None:
-            expected = next(
-                (
-                    c
-                    for c in metadata_table.constraints
-                    if isinstance(c, CheckConstraint) and c.name == expected_name
-                ),
-                None,
-            )
-
-        # Look up the DB-side CHECK by name.
-        insp: Inspector = autogen_context.inspector
-        try:
-            db_checks = insp.get_check_constraints(table_name)
-        except NotImplementedError:
-            return
-        db = next((c for c in db_checks if c.get("name") == expected_name), None)
-
-        if expected is None and db is None:
-            return
-        if (
-            expected is not None
-            and db is not None
-            and _normalize_sqltext(str(expected.sqltext))
-            == _normalize_sqltext(db.get("sqltext", ""))
-        ):
-            return  # in sync
-
-        if db is not None:
-            # Build a placeholder Constraint for the to-be-dropped CHECK so
-            # alembic's reversibility helpers can render it. The SQL text
-            # comes from the DB inspection, the name matches.
-            old_constraint = CheckConstraint(db.get("sqltext", ""), name=expected_name)
-            # Attach to a transient Table so the constraint has a table
-            # reference (required by alembic's renderer).
-            sqla_inspect_table = metadata_table
-            old_constraint._set_parent(sqla_inspect_table)  # type: ignore[attr-defined]
-            modify_table_ops.ops.append(
-                _ops.DropConstraintOp.from_constraint(old_constraint)
-            )
-            # Detach so we don't leave the placeholder on the metadata table.
-            sqla_inspect_table.constraints.discard(old_constraint)
-        if expected is not None:
-            modify_table_ops.ops.append(_ops.AddConstraintOp.from_constraint(expected))
+    _comparators.dispatch_for("table")(compare_fsm_check)
 
 
 def _normalize_sqltext(text: str) -> str:

@@ -14,5 +14,5 @@ _register_fsm_validator()
 
 try:
     __version__ = version("sqlalchemy-fsm")
-except PackageNotFoundError:
+except PackageNotFoundError:  # pragma: no cover
     __version__ = "0.0.0.dev0"

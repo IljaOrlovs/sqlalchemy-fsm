@@ -70,25 +70,37 @@ def _initial_state(column: Column) -> str | None:
     enum_value = getattr(arg, "value", None)
     if isinstance(enum_value, str):
         return enum_value
-    # Zero-arg callable default (`default=lambda: "draft"`). Only call if it
-    # takes no parameters — SA passes a context to callables that accept one,
-    # and we don't have one here.
+    # Callable default. Two SA-side shapes we handle:
+    #
+    # 1. `default=lambda: "draft"` — SA wraps it as `lambda ctx: fn()` so the
+    #    actual `.arg` requires one positional argument. We probe with
+    #    `follow_wrapped=False` to see the wrapper, then call with `None`.
+    # 2. `default=lambda ctx=None: "draft"` — already accepts a ctx itself.
+    #
+    # Any callable that raises, returns non-str, or refuses our probe is
+    # treated as unresolvable (returns `None`).
     if callable(arg):
         try:
-            sig = py_inspect.signature(arg)
+            sig = py_inspect.signature(arg, follow_wrapped=False)
         except (TypeError, ValueError):
             return None
-        if not any(
-            p.kind
-            in (py_inspect.Parameter.POSITIONAL_ONLY, py_inspect.Parameter.POSITIONAL_OR_KEYWORD)
-            and p.default is py_inspect.Parameter.empty
+        required = [
+            p
             for p in sig.parameters.values()
-        ):
-            try:
-                result = arg()
-            except Exception:
-                return None
-            return result if isinstance(result, str) else None
+            if p.kind
+            in (
+                py_inspect.Parameter.POSITIONAL_ONLY,
+                py_inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+            and p.default is py_inspect.Parameter.empty
+        ]
+        # SA only ever wraps 0- or 1-arg callables (it raises on more), so
+        # `required` is always [] or [<ctx>] here.
+        try:
+            result = arg(None) if required else arg()
+        except Exception:
+            return None
+        return result if isinstance(result, str) else None
     return None
 
 

@@ -41,19 +41,16 @@ def iter_transitions(model_cls: type) -> list[tuple[str, FsmTransition]]:
     """Yield (attribute name, descriptor) for every `@transition` on `cls`.
 
     Walks the MRO without triggering descriptor `__get__`, so we see the
-    `FsmTransition` itself rather than a bound wrapper. Each name appears
-    at most once (overrides win)."""
+    `FsmTransition` itself rather than a bound wrapper. `dir()` already
+    deduplicates names, and the inner loop stops at the first MRO hit,
+    so overrides win and each name appears at most once."""
     out: list[tuple[str, FsmTransition]] = []
-    seen: set[str] = set()
     for name in dir(model_cls):
-        if name in seen:
-            continue
         for klass in model_cls.__mro__:
             if name in klass.__dict__:
                 attr = klass.__dict__[name]
                 if isinstance(attr, FsmTransition):
                     out.append((name, attr))
-                    seen.add(name)
                 break
     return out
 
