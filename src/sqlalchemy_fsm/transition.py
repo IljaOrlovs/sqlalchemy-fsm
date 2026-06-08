@@ -90,9 +90,9 @@ class InstanceBoundFsmTransition:
         return bound_meta.target_state == bound_meta.current_state
 
     def set(self, *args: Any, **kwargs: Any) -> None:
-        """Execute the transition. Raises if the current state or conditions
-        don't allow it. Mutates the field in memory — commit the session
-        yourself to persist."""
+        """Execute the transition. Raises if the current state, permissions,
+        or conditions don't allow it. Mutates the field in memory — commit
+        the session yourself to persist."""
         bound_meta = self._sa_fsm_bound_meta
         func = self._sa_fsm_transition_fn
 
@@ -101,14 +101,20 @@ class InstanceBoundFsmTransition:
                 f"Unable to switch from {bound_meta.current_state} "
                 f"using method {func.__name__}"
             )
+        if not bound_meta.permissions_met(args, kwargs):
+            raise exc.PermissionDeniedError(
+                f"Permission denied for transition {func.__name__}."
+            )
         if not bound_meta.conditions_met(args, kwargs):
             raise exc.PreconditionError("Preconditions are not satisfied.")
         return bound_meta.to_next_state(args, kwargs)
 
     def can_proceed(self, *args: Any, **kwargs: Any) -> bool:
         bound_meta = self._sa_fsm_bound_meta
-        return bound_meta.transition_possible() and bound_meta.conditions_met(
-            args, kwargs
+        return (
+            bound_meta.transition_possible()
+            and bound_meta.permissions_met(args, kwargs)
+            and bound_meta.conditions_met(args, kwargs)
         )
 
 
@@ -148,13 +154,18 @@ def transition(
     source: SourceState = "*",
     target: str | None = None,
     conditions: Iterable[Callable[..., Any]] = (),
+    permissions: Iterable[Callable[..., Any]] = (),
 ) -> Callable[[Any], FsmTransition]:
     def inner_transition(subject: Any) -> FsmTransition:
         if py_inspect.isfunction(subject):
-            meta = FSMMeta(source, target, conditions, (), bound.BoundFSMFunction)
+            meta = FSMMeta(
+                source, target, conditions, (), bound.BoundFSMFunction, permissions
+            )
         elif py_inspect.isclass(subject):
             # Assume a class with multiple handles for various source states
-            meta = FSMMeta(source, target, conditions, (), bound.BoundFSMClass)
+            meta = FSMMeta(
+                source, target, conditions, (), bound.BoundFSMClass, permissions
+            )
         else:
             raise NotImplementedError(f"Do not know how to {subject!r}")
 

@@ -16,3 +16,8 @@ class SetupError(FSMException):
 
 class InvalidSourceStateError(FSMException, NotImplementedError):
     """The current state isn't in the transition's allowed source set."""
+
+
+class PermissionDeniedError(FSMException):
+    """A `permissions=` callable returned falsy — the caller is not allowed
+    to execute this transition."""

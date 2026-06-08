@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `permissions=[...]` kwarg on `@transition` for RBAC checks, separate from
+  `conditions`. Each callable receives `(instance, *args, **kwargs)` forwarded
+  from `set()` / `can_proceed()`. A failing permission raises
+  `PermissionDeniedError`; checks run after source-state and before conditions.
+- `PermissionDeniedError` (in `sqlalchemy_fsm.exc`).
+
 ## [2.2.0] - 2026-06-08
 
 ### Added

@@ -67,6 +67,9 @@ class BoundFSMBase:
     def conditions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
         raise NotImplementedError
 
+    def permissions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
+        raise NotImplementedError
+
     def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
         raise NotImplementedError
 
@@ -100,27 +103,36 @@ class BoundFSMFunction(BoundFSMBase):
             return err
         return None
 
+    def _eval_callables(
+        self,
+        callables: tuple[Callable[..., Any], ...],
+        args: Iterable[Any],
+        kwargs: Mapping[str, Any],
+    ) -> bool:
+        """Run each callable with the merged args; short-circuit on first falsy."""
+        if not callables:
+            return True
+        for fn in callables:
+            if self.get_call_iface_error(fn, args, kwargs):
+                return False
+            if not fn(*args, **kwargs):
+                return False
+        return True
+
     def conditions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
         conditions = self.meta.conditions
         if not conditions:
             return True
 
-        args = self.my_args + tuple(args)
-        kwargs = dict(kwargs)
+        merged_args = self.my_args + tuple(args)
+        merged_kwargs = dict(kwargs)
 
-        out = True
-        for condition in conditions:
-            if self.get_call_iface_error(condition, args, kwargs):
-                out = False
-            else:
-                out = condition(*args, **kwargs)
-            if not out:
-                break
+        out = self._eval_callables(conditions, merged_args, merged_kwargs)
 
         if out:
             # If conditions accept these args, the handler must too — otherwise
             # set() would pass conditions and then crash inside the handler.
-            err = self.get_call_iface_error(self.set_func, args, kwargs)
+            err = self.get_call_iface_error(self.set_func, merged_args, merged_kwargs)
             if err:
                 warnings.warn(
                     f"Failure to validate handler call args: {err}",
@@ -133,6 +145,13 @@ class BoundFSMFunction(BoundFSMBase):
                         f"({self.meta.conditions!r}) & handler ({self.set_func!r})"
                     )
         return out
+
+    def permissions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
+        permissions = self.meta.permissions
+        if not permissions:
+            return True
+        merged_args = self.my_args + tuple(args)
+        return self._eval_callables(permissions, merged_args, dict(kwargs))
 
     def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
         old_state = self.current_state
@@ -193,6 +212,9 @@ class TransitionStateArithmetics:
     def joint_conditions(self) -> tuple[Callable[..., Any], ...]:
         return self.meta_a.conditions + self.meta_b.conditions
 
+    def joint_permissions(self) -> tuple[Callable[..., Any], ...]:
+        return self.meta_a.permissions + self.meta_b.permissions
+
     def joint_args(self) -> tuple[Any, ...]:
         return self.meta_a.extra_call_args + self.meta_b.extra_call_args
 
@@ -245,6 +267,7 @@ def inherited_bound_classes(key: tuple[type, "meta.FSMMeta"]) -> type:
                 arithmetics.joint_conditions(),
                 arithmetics.joint_args(),
                 sub_meta.bound_cls,
+                arithmetics.joint_permissions(),
             )
             out.append((merged_sub_meta, transition._sa_fsm_transition_fn))
 
@@ -306,11 +329,21 @@ class BoundFSMClass(BoundFSMBase):
             for sub in self.bound_sub_metas
         )
 
+    def permissions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
+        # A class-based transition is allowed if any applicable sub-handler
+        # accepts the caller — mirrors the dispatch in to_next_state().
+        return any(
+            sub.transition_possible() and sub.permissions_met(args, kwargs)
+            for sub in self.bound_sub_metas
+        )
+
     def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
         can_transition_with = [
             sub
             for sub in self.bound_sub_metas
-            if sub.transition_possible() and sub.conditions_met(args, kwargs)
+            if sub.transition_possible()
+            and sub.permissions_met(args, kwargs)
+            and sub.conditions_met(args, kwargs)
         ]
         if len(can_transition_with) > 1:
             raise exc.SetupError(

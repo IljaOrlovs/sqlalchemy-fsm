@@ -12,12 +12,14 @@ class FSMMeta:
         "bound_cls",
         "conditions",
         "extra_call_args",
+        "permissions",
         "sources",
         "target",
     )
 
     bound_cls: type
     conditions: tuple[Callable[..., Any], ...]
+    permissions: tuple[Callable[..., Any], ...]
     extra_call_args: tuple[Any, ...]
     sources: frozenset[str | None]
     target: str | None
@@ -29,9 +31,11 @@ class FSMMeta:
         conditions: Iterable[Callable[..., Any]],
         extra_args: Iterable[Any],
         bound_cls: type,
+        permissions: Iterable[Callable[..., Any]] = (),
     ) -> None:
         self.bound_cls = bound_cls
         self.conditions = tuple(conditions)
+        self.permissions = tuple(permissions)
         self.extra_call_args = tuple(extra_args)
 
         if target is not None:
@@ -67,5 +71,6 @@ class FSMMeta:
             f"sources={self.sources!r} "
             f"target={self.target!r} "
             f"conditions={self.conditions!r} "
+            f"permissions={self.permissions!r} "
             f"extra call args={self.extra_call_args!r}>"
         )

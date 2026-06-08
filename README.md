@@ -96,6 +96,33 @@ post.publish.set()
 
 Conditions must be side-effect-free — `can_proceed()` evaluates them too.
 
+## Permissions (RBAC)
+
+`permissions=` accepts callables that gate the transition for authorization,
+separately from `conditions`. They run **after** the source-state check and
+**before** `conditions`. A failing permission raises `PermissionDeniedError`
+from `set()`; `can_proceed()` returns `False`.
+
+```python
+from sqlalchemy_fsm.exc import PermissionDeniedError
+
+def is_editor(instance, user=None, **_):
+    return getattr(user, "role", None) == "editor"
+
+class Doc(Base):
+    ...
+    @transition(source="draft", target="published", permissions=[is_editor])
+    def publish(self, user=None):
+        ...
+
+doc.publish.can_proceed(user=current_user)
+doc.publish.set(user=current_user)   # raises PermissionDeniedError if not allowed
+```
+
+Each callable receives the instance plus any args forwarded from
+`set()` / `can_proceed()` — pass `user=` (or whatever you need) explicitly.
+All listed permissions must pass.
+
 ## Class-grouped transitions
 
 To branch on the source state with different handlers, decorate a class:
