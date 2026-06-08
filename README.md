@@ -1,5 +1,10 @@
-[![PyPI version](https://badge.fury.io/py/sqlalchemy-fsm.svg)](https://badge.fury.io/py/sqlalchemy-fsm)
+[![PyPI version](https://img.shields.io/pypi/v/sqlalchemy-fsm.svg)](https://pypi.org/project/sqlalchemy-fsm/)
+[![Python versions](https://img.shields.io/pypi/pyversions/sqlalchemy-fsm.svg)](https://pypi.org/project/sqlalchemy-fsm/)
 [![CI](https://github.com/IljaOrlovs/sqlalchemy-fsm/actions/workflows/main.yml/badge.svg)](https://github.com/IljaOrlovs/sqlalchemy-fsm/actions/workflows/main.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Downloads](https://static.pepy.tech/badge/sqlalchemy-fsm/month)](https://pepy.tech/project/sqlalchemy-fsm)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Checked with pyright](https://microsoft.github.io/pyright/img/pyright_badge.svg)](https://microsoft.github.io/pyright/)
 
 # sqlalchemy-fsm
 

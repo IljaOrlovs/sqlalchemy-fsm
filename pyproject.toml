@@ -1,25 +1,46 @@
 [project]
 name = "sqlalchemy-fsm"
 dynamic = ["version"]
-description = "Finite state machine field for SQLAlchemy"
+description = "Declarative finite state machine for SQLAlchemy models — typed, tested, drop-in for both SQLAlchemy 1.4 and 2.x."
 authors = [
+    {name = "Ilja Orlovs", email = "vrghost@gmail.com"},
+]
+maintainers = [
     {name = "Ilja Orlovs", email = "vrghost@gmail.com"},
 ]
 license = {file = "LICENSE"}
 readme = "README.md"
 requires-python = ">=3.10"
-keywords = ["sqlalchemy", "finite", "state", "machine", "fsm"]
+keywords = [
+    "sqlalchemy",
+    "fsm",
+    "finite-state-machine",
+    "state-machine",
+    "state-management",
+    "workflow",
+    "transitions",
+    "orm",
+    "declarative",
+    "django-fsm",
+]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
     "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
     "Operating System :: OS Independent",
+    "Programming Language :: Python",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Topic :: Database",
+    "Topic :: Database :: Front-Ends",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
 dependencies = [
@@ -28,8 +49,12 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/IljaOrlovs/sqlalchemy-fsm"
+Documentation = "https://github.com/IljaOrlovs/sqlalchemy-fsm#readme"
+Repository = "https://github.com/IljaOrlovs/sqlalchemy-fsm"
 Source = "https://github.com/IljaOrlovs/sqlalchemy-fsm"
 Issues = "https://github.com/IljaOrlovs/sqlalchemy-fsm/issues"
+Changelog = "https://github.com/IljaOrlovs/sqlalchemy-fsm/blob/main/CHANGELOG.md"
+Releases = "https://github.com/IljaOrlovs/sqlalchemy-fsm/releases"
 
 [dependency-groups]
 dev = [
