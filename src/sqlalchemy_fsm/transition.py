@@ -1,4 +1,4 @@
-"""Transition decorator."""
+"""The `@transition` decorator and the descriptor it produces."""
 
 import inspect as py_inspect
 import warnings
@@ -25,10 +25,7 @@ SourceState = str | None | Iterable[str | None]
 
 @cache.dict_cache
 def sql_equality_cache(key: tuple[Any, str | None]) -> Any:
-    """It takes a bit of time for sqlalchemy to generate these.
-
-    So I'm caching them.
-    """
+    """Memoize `Column == target` — building the SA expression is non-trivial."""
     (column, target) = key
     if not target:
         raise exc.SetupError("Target must be defined.")
@@ -56,19 +53,18 @@ class ClassBoundFsmTransition:
         self._sa_fsm_transition_fn = payload_func
 
     def __call__(self) -> Any:
-        """Return a SQLAlchemy filter for this particular state."""
+        """SA filter expression matching rows whose state == this transition's target."""
         column = self._sa_fsm_sqla_handle.fsm_column
         target = self._sa_fsm_meta.target
         return sql_equality_cache.get_value((column, target))
 
     def is_(self, value: Any) -> Any:
         if isinstance(value, bool):
-            out = self().is_(value)
-        else:
-            warnings.warn(f"Unexpected is_ argument: {value!r}", stacklevel=2)
-            # Can be used as sqlalchemy filer. Won't match anything
-            out = False
-        return out
+            return self().is_(value)
+        # Non-bool argument: warn and return a sentinel False that, used as a
+        # SA filter, matches nothing.
+        warnings.warn(f"Unexpected is_ argument: {value!r}", stacklevel=2)
+        return False
 
 
 class InstanceBoundFsmTransition:
@@ -89,12 +85,14 @@ class InstanceBoundFsmTransition:
         self._sa_fsm_bound_meta = meta.get_bound(sqla_handle, transition_fn, ())
 
     def __call__(self) -> bool:
-        """Check if this is the current state of the object."""
+        """True if this instance is currently in the transition's target state."""
         bound_meta = self._sa_fsm_bound_meta
         return bound_meta.target_state == bound_meta.current_state
 
     def set(self, *args: Any, **kwargs: Any) -> None:
-        """Transition the FSM to this new state."""
+        """Execute the transition. Raises if the current state or conditions
+        don't allow it. Mutates the field in memory — commit the session
+        yourself to persist."""
         bound_meta = self._sa_fsm_bound_meta
         func = self._sa_fsm_transition_fn
 

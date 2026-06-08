@@ -1,16 +1,13 @@
-"""Utility functions and consts."""
+"""State-name predicates."""
 
 from typing import Any
 
 
 def is_valid_fsm_state(value: Any) -> bool:
+    """A target/state name: any non-empty string."""
     return bool(isinstance(value, str) and value)
 
 
 def is_valid_source_state(value: Any) -> bool:
-    """This function makes exceptions for special source states.
-
-    E.g. It explicitly allows '*' (for any state)
-        and `None` (as this is the default value for sqlalchemy columns).
-    """
+    """A transition source: a state name, `"*"` (any), or `None` (NULL column)."""
     return (value == "*") or (value is None) or is_valid_fsm_state(value)

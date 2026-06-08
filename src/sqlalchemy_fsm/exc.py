@@ -1,17 +1,18 @@
-"""FSM exceptions."""
+"""Exceptions raised by the FSM machinery."""
 
 
 class FSMException(Exception):
-    """Generic Finite State Machine Exception."""
+    """Base class for every exception this library raises."""
 
 
 class PreconditionError(FSMException):
-    """Raised when transition conditions are not satisfied."""
+    """A `conditions=` callable returned falsy — the transition is blocked."""
 
 
 class SetupError(FSMException):
-    """Raised when FSM is configured incorrectly."""
+    """The model or transition is misconfigured (e.g. missing/duplicate FSMField,
+    incompatible parent/child source sets, handler/condition arg mismatch)."""
 
 
 class InvalidSourceStateError(FSMException, NotImplementedError):
-    """Can not switch from current state to the requested state."""
+    """The current state isn't in the transition's allowed source set."""

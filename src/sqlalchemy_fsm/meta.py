@@ -1,4 +1,4 @@
-"""FSM meta object."""
+"""`FSMMeta` — the validated descriptor attached to every `@transition`."""
 
 import collections.abc
 from collections.abc import Callable, Iterable

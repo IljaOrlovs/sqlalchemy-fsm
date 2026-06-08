@@ -11,23 +11,18 @@ T = TypeVar("T")
 
 @sqlalchemy.event.dispatcher
 class FSMSchemaEvents(sqlalchemy.orm.events.InstanceEvents):
-    """Define event listeners for FSM Schema (table) objects."""
+    """SQLAlchemy event hooks fired around every FSM transition."""
 
     def before_state_change(self, source: str | None, target: str | None) -> None:
-        """Event that is fired before the model changes
-        form `source` to `target` state."""
+        """Fires immediately before the transition handler runs."""
 
     def after_state_change(self, source: str | None, target: str | None) -> None:
-        """Event that is fired after the model changes
-        form `source` to `target` state."""
+        """Fires after the handler and after the state field has been updated."""
 
 
 @dataclass(slots=True)
 class InstanceRef(Generic[T]):
-    """This class has to be passed to the dispatch call as instance.
-
-    No idea why it is required.
-    """
+    """Wrapper accepted by SQLAlchemy's dispatch as the `instance` argument."""
 
     target: T
 
@@ -39,23 +34,24 @@ FSM_EVENT_DISPATCHER_CACHE: dict[type, Any] = {}
 
 
 def get_class_bound_dispatcher(target_cls: type) -> Any:
-    """Python class-bound FSM dispatcher class."""
+    """Lazily register `target_cls` with SQLAlchemy's instrumentation and
+    cache the resulting dispatcher."""
     try:
-        out_val = FSM_EVENT_DISPATCHER_CACHE[target_cls]
+        return FSM_EVENT_DISPATCHER_CACHE[target_cls]
     except KeyError:
         out_val = register_class(target_cls).dispatch
         FSM_EVENT_DISPATCHER_CACHE[target_cls] = out_val
-    return out_val
+        return out_val
 
 
 class BoundFSMDispatcher:
-    """Utility method that simplifies sqlalchemy event dispatch."""
+    """Per-instance fan-out to SQLAlchemy's class-level event dispatcher."""
 
     def __init__(self, instance: Any) -> None:
         self.__ref = InstanceRef(instance)
         self.__cls_dispatcher = get_class_bound_dispatcher(type(instance))
+        # Eagerly materialise the two FSM events so the hot path skips __getattr__.
         for fsm_handle in ("before_state_change", "after_state_change"):
-            # Precompute fsm handles
             getattr(self, fsm_handle)
 
     def __getattr__(self, name: str) -> Any:

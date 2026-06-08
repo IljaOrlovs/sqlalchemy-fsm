@@ -1,6 +1,4 @@
-"""
-Non-meta objects that are bound to a particular table & sqlalchemy instance.
-"""
+"""Instance-bound FSM machinery: handles, conditions, and transition execution."""
 
 import inspect as py_inspect
 import warnings
@@ -95,10 +93,7 @@ class BoundFSMFunction(BoundFSMBase):
         args: Iterable[Any],
         kwargs: Mapping[str, Any],
     ) -> TypeError | None:
-        """Returns 'Type' error describing function's api mismatch (if one exists)
-
-        or None
-        """
+        """`None` if `fn(*args, **kwargs)` would bind cleanly; else the `TypeError`."""
         try:
             py_inspect.getcallargs(fn, *args, **kwargs)
         except TypeError as err:
@@ -108,34 +103,29 @@ class BoundFSMFunction(BoundFSMBase):
     def conditions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
         conditions = self.meta.conditions
         if not conditions:
-            # Performance - skip the check
             return True
 
         args = self.my_args + tuple(args)
-
         kwargs = dict(kwargs)
 
         out = True
         for condition in conditions:
-            # Check that condition is call-able with args provided
             if self.get_call_iface_error(condition, args, kwargs):
                 out = False
             else:
                 out = condition(*args, **kwargs)
-
             if not out:
-                # Preconditions failed
                 break
 
         if out:
-            # Check that the function itself can be called with these args
+            # If conditions accept these args, the handler must too — otherwise
+            # set() would pass conditions and then crash inside the handler.
             err = self.get_call_iface_error(self.set_func, args, kwargs)
             if err:
                 warnings.warn(
                     f"Failure to validate handler call args: {err}",
                     stacklevel=2,
                 )
-                # Can not map call args to handler's
                 out = False
                 if conditions:
                     raise exc.SetupError(
@@ -167,13 +157,18 @@ class BoundFSMFunction(BoundFSMBase):
 
 @dataclass(slots=True)
 class TransitionStateArithmetics:
-    """Helper class aiding in merging transition state params."""
+    """Merge a parent class-transition meta with a child handler meta.
+
+    Used to resolve which sub-handler covers which source state and to
+    detect incompatible declarations at setup time.
+    """
 
     meta_a: "meta.FSMMeta"
     meta_b: "meta.FSMMeta"
 
     def source_intersection(self) -> frozenset[str | None] | bool:
-        """Returns intersected sources meta sources."""
+        """Sources reachable by both; `"*"` on either side widens to the other.
+        Returns `False` if there is no overlap."""
         sources_a = self.meta_a.sources
         sources_b = self.meta_b.sources
 
@@ -186,21 +181,16 @@ class TransitionStateArithmetics:
         return False
 
     def target_intersection(self) -> str | None:
+        """The single agreed target, or `None` if the two targets conflict."""
         target_a = self.meta_a.target
         target_b = self.meta_b.target
         if target_a == target_b:
-            # Also covers the case when both are None
-            out = target_a
-        elif None in (target_a, target_b):
-            # Return value that is not None
-            out = target_a or target_b
-        else:
-            # Both are non-equal strings
-            out = None
-        return out
+            return target_a  # covers both-None too
+        if None in (target_a, target_b):
+            return target_a or target_b  # the non-None one wins
+        return None  # two distinct concrete targets — incompatible
 
     def joint_conditions(self) -> tuple[Callable[..., Any], ...]:
-        """Returns union of both conditions."""
         return self.meta_a.conditions + self.meta_b.conditions
 
     def joint_args(self) -> tuple[Any, ...]:
