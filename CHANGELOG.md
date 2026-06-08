@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from `set()` / `can_proceed()`. A failing permission raises
   `PermissionDeniedError`; checks run after source-state and before conditions.
 - `PermissionDeniedError` (in `sqlalchemy_fsm.exc`).
+- `sqlalchemy_fsm.extras.graph` — render a model's transition graph as
+  Mermaid / Graphviz DOT / PlantUML source via `to_mermaid()`, `to_dot()`,
+  `to_plantuml()`. Class-grouped transitions are flattened to match
+  runtime dispatch.
 
 ## [2.2.0] - 2026-06-08
 

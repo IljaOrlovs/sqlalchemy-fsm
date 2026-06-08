@@ -166,6 +166,24 @@ def on_change(instance, source, target):
 
 Remove with `sqlalchemy.event.remove(...)`.
 
+## Diagram export
+
+`sqlalchemy_fsm.extras.graph` renders a model's transition graph as
+Mermaid / Graphviz DOT / PlantUML source — useful for embedding in docs
+or generating an SVG with the respective tool.
+
+```python
+from sqlalchemy_fsm.extras.graph import to_mermaid, to_dot, to_plantuml
+
+print(to_mermaid(BlogPost))   # stateDiagram-v2 ... (renders on GitHub)
+print(to_dot(BlogPost))       # pipe through `dot -Tsvg`
+print(to_plantuml(BlogPost))
+```
+
+`source="*"` is emitted as a synthetic `(any)` node (or `[*]` in PlantUML).
+Class-grouped transitions are flattened so the rendered edges match
+runtime dispatch.
+
 ## Type checking
 
 The package ships type information (PEP 561 `py.typed`). pyright / mypy
