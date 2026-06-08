@@ -8,7 +8,7 @@ dependency-free so anything in the package can import it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from . import bound as _bound
 from .transition import FsmTransition
@@ -92,7 +92,8 @@ def collect_transition_states(model_cls: type, column: Any = None) -> set[str]:
         meta = fsm_t.meta
         states |= _concrete_states_from_meta(meta)
         if _is_class_group(meta, fsm_t.set_fn):
-            for _, sub in iter_transitions(fsm_t.set_fn):
+            # `_is_class_group` already confirmed `set_fn` is a class.
+            for _, sub in iter_transitions(cast(type, fsm_t.set_fn)):
                 states |= _concrete_states_from_meta(sub.meta)
     return states
 
@@ -110,7 +111,7 @@ def collect_edges(model_cls: type, column: Any = None) -> list[TransitionEdge]:
     for name, fsm_t in iter_transitions(model_cls, column=column):
         meta = fsm_t.meta
         if _is_class_group(meta, fsm_t.set_fn):
-            edges.extend(_edges_from_class_group(name, meta, fsm_t.set_fn))
+            edges.extend(_edges_from_class_group(name, meta, cast(type, fsm_t.set_fn)))
         else:
             edges.extend(_edges_from_meta(name, meta))
     edges.sort(key=lambda e: (e.label, e.source or "", e.target))

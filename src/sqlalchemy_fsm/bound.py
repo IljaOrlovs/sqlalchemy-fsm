@@ -515,10 +515,21 @@ class AsyncBoundFSMClass(BoundFSMClass):
 
     __slots__ = ()
 
+    def _applicable_async_subs(self) -> list["AsyncBoundFSMFunction"]:
+        """Same as `_applicable_subs`, but narrowed to the async type.
+
+        By construction the parent transition is `AsyncBoundFSMClass`, so
+        every sub-handler is `AsyncBoundFSMFunction`; the base class just
+        can't express that statically.
+        """
+        from typing import cast
+
+        return cast(list["AsyncBoundFSMFunction"], self._applicable_subs())
+
     async def aconditions_met(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
     ) -> bool:
-        for sub in self._applicable_subs():
+        for sub in self._applicable_async_subs():
             if await sub.aconditions_met(args, kwargs):
                 return True
         return False
@@ -526,7 +537,7 @@ class AsyncBoundFSMClass(BoundFSMClass):
     async def apermissions_met(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
     ) -> bool:
-        for sub in self._applicable_subs():
+        for sub in self._applicable_async_subs():
             if await sub.apermissions_met(args, kwargs):
                 return True
         return False
@@ -535,7 +546,7 @@ class AsyncBoundFSMClass(BoundFSMClass):
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
     ) -> None:
         accepted: list[AsyncBoundFSMFunction] = []
-        for sub in self._applicable_subs():
+        for sub in self._applicable_async_subs():
             if await sub.apermissions_met(args, kwargs) and await sub.aconditions_met(
                 args, kwargs
             ):

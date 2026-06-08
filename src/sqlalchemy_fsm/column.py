@@ -26,7 +26,12 @@ from . import exc
 from .sqltypes import FSMField
 
 if TYPE_CHECKING:
-    from .transition import FsmTransition, SourceState
+    from .transition import (
+        AsyncFsmTransition,
+        FsmTransition,
+        SourceState,
+        SyncFsmTransition,
+    )
 
 
 class FSMColumn(sa.Column):
@@ -110,7 +115,7 @@ class FSMColumn(sa.Column):
         target: str | None = None,
         conditions: Iterable[Callable[..., Any]] = (),
         permissions: Iterable[Callable[..., Any]] = (),
-    ) -> Callable[[Any], "FsmTransition"]:
+    ) -> Callable[[Any], "SyncFsmTransition"]:
         """Like the module-level `@transition`, but scoped to this column.
 
         Validates `source`/`target` state names against this column's
@@ -118,7 +123,7 @@ class FSMColumn(sa.Column):
         from different columns on the same model is fine — each transition
         only writes back to the column it was declared on.
         """
-        return self._make_decorator(False, source, target, conditions, permissions)
+        return self._make_decorator(False, source, target, conditions, permissions)  # type: ignore[return-value]
 
     def async_transition(
         self,
@@ -126,9 +131,9 @@ class FSMColumn(sa.Column):
         target: str | None = None,
         conditions: Iterable[Callable[..., Any]] = (),
         permissions: Iterable[Callable[..., Any]] = (),
-    ) -> Callable[[Any], "FsmTransition"]:
+    ) -> Callable[[Any], "AsyncFsmTransition"]:
         """Async sibling of `.transition`. See `sqlalchemy_fsm.async_transition`."""
-        return self._make_decorator(True, source, target, conditions, permissions)
+        return self._make_decorator(True, source, target, conditions, permissions)  # type: ignore[return-value]
 
     def _make_decorator(
         self,

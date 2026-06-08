@@ -4,7 +4,7 @@ import asyncio
 import inspect as py_inspect
 import warnings
 from collections.abc import Callable, Iterable
-from typing import Any, overload
+from typing import TYPE_CHECKING, Any, overload
 
 try:
     # SQLAlchemy 2.0+
@@ -181,6 +181,16 @@ class AsyncInstanceBoundFsmTransition(_InstanceBoundBase):
 
 
 class FsmTransition(InspectionAttrInfo):
+    """Base descriptor for both sync and async transitions.
+
+    The sync vs async distinction is a runtime property of `meta.is_async`,
+    but static checkers can't see through that — they need a concrete
+    return type on `__get__`. We therefore expose two thin subclasses
+    (`SyncFsmTransition` / `AsyncFsmTransition`) whose only purpose is to
+    override the `__get__` overloads with the concrete instance-bound
+    type. The runtime `__get__` lives here.
+    """
+
     is_attribute = True
     extension_type = HYBRID_METHOD
     _sa_fsm_is_transition = True
@@ -196,13 +206,6 @@ class FsmTransition(InspectionAttrInfo):
         # Set by `FSMColumn.transition`; `None` for the legacy module-level
         # `@transition`, which resolves to the model's single FSM column.
         self.column_ref = column_ref
-
-    @overload
-    def __get__(self, instance: None, owner: type) -> ClassBoundFsmTransition: ...
-    @overload
-    def __get__(
-        self, instance: object, owner: type
-    ) -> "InstanceBoundFsmTransition | AsyncInstanceBoundFsmTransition": ...
 
     def __get__(
         self, instance: Any, owner: type
@@ -225,6 +228,36 @@ class FsmTransition(InspectionAttrInfo):
         )
 
 
+class SyncFsmTransition(FsmTransition):
+    """Descriptor produced by `@transition` — typed for sync handlers."""
+
+    if TYPE_CHECKING:
+        @overload  # type: ignore[override]
+        def __get__(self, instance: None, owner: Any) -> ClassBoundFsmTransition: ...
+        @overload
+        def __get__(self, instance: object, owner: Any) -> InstanceBoundFsmTransition: ...
+        def __get__(self, instance: Any, owner: Any) -> Any: ...
+
+
+class AsyncFsmTransition(FsmTransition):
+    """Descriptor produced by `@async_transition` — typed for async handlers."""
+
+    if TYPE_CHECKING:
+        @overload  # type: ignore[override]
+        def __get__(self, instance: None, owner: Any) -> ClassBoundFsmTransition: ...
+        @overload
+        def __get__(
+            self, instance: object, owner: Any
+        ) -> AsyncInstanceBoundFsmTransition: ...
+        def __get__(self, instance: Any, owner: Any) -> Any: ...
+
+
+if TYPE_CHECKING:
+    from typing import TypeVar
+
+    _T = TypeVar("_T", bound=FsmTransition)
+
+
 def _make_transition(
     is_async: bool,
     source: SourceState,
@@ -234,6 +267,9 @@ def _make_transition(
 ) -> Callable[[Any], FsmTransition]:
     fn_cls = bound.AsyncBoundFSMFunction if is_async else bound.BoundFSMFunction
     cls_cls = bound.AsyncBoundFSMClass if is_async else bound.BoundFSMClass
+    transition_cls: type[FsmTransition] = (
+        AsyncFsmTransition if is_async else SyncFsmTransition
+    )
 
     def inner(subject: Any) -> FsmTransition:
         if py_inspect.isfunction(subject):
@@ -245,7 +281,7 @@ def _make_transition(
         meta = FSMMeta(
             source, target, conditions, (), bound_cls, permissions, is_async=is_async
         )
-        return FsmTransition(meta, subject)
+        return transition_cls(meta, subject)
 
     return inner
 
@@ -255,8 +291,8 @@ def transition(
     target: str | None = None,
     conditions: Iterable[Callable[..., Any]] = (),
     permissions: Iterable[Callable[..., Any]] = (),
-) -> Callable[[Any], FsmTransition]:
-    return _make_transition(False, source, target, conditions, permissions)
+) -> Callable[[Any], SyncFsmTransition]:
+    return _make_transition(False, source, target, conditions, permissions)  # type: ignore[return-value]
 
 
 def async_transition(
@@ -264,8 +300,8 @@ def async_transition(
     target: str | None = None,
     conditions: Iterable[Callable[..., Any]] = (),
     permissions: Iterable[Callable[..., Any]] = (),
-) -> Callable[[Any], FsmTransition]:
+) -> Callable[[Any], AsyncFsmTransition]:
     """Like `@transition`, but the handler — and any conditions/permissions —
     may be `async def`. Invoke via `await instance.<name>.aset(...)`; only
     works inside a running asyncio event loop. Sync callables remain valid."""
-    return _make_transition(True, source, target, conditions, permissions)
+    return _make_transition(True, source, target, conditions, permissions)  # type: ignore[return-value]

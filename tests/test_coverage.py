@@ -211,7 +211,7 @@ class TestAsyncBoundFSMClass:
             await doc.advance.aset()
 
         asyncio.run(run())
-        assert doc.state == "done"
+        assert str(doc.state) == "done"
 
     def test_aconditions_met_returns_true_when_any_sub_applies(self):
         doc = _AsyncClsDoc()
