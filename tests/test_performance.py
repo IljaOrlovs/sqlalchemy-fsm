@@ -5,6 +5,9 @@ import sqlalchemy_fsm
 
 from .conftest import Base
 
+# Whole module is opt-in. Run with: `pdm run pytest -m benchmark --benchmark-only`
+pytestmark = pytest.mark.benchmark
+
 
 class Benchmarked(Base):
     __tablename__ = "benchmark_test"
@@ -13,7 +16,7 @@ class Benchmarked(Base):
 
     def __init__(self, *args, **kwargs):
         self.state = "new"
-        super(Benchmarked, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     @sqlalchemy_fsm.transition(source="*", target="published")
     def published(self):
@@ -24,7 +27,7 @@ class Benchmarked(Base):
         pass
 
     @sqlalchemy_fsm.transition(target="cls_transition")
-    class cls_move(object):  # noqa: N801
+    class cls_move:  # noqa: N801
         @sqlalchemy_fsm.transition(source="new")
         def from_new(self, instance):
             pass
@@ -42,11 +45,7 @@ class Benchmarked(Base):
             pass
 
 
-# Only enable this when profiling
-
-
-@pytest.mark.skip
-class TestPerformanceSimple(object):
+class TestPerformanceSimple:
     @pytest.fixture
     def model(self, session):
         out = Benchmarked()

@@ -1,7 +1,5 @@
-import unittest
-
+import pytest
 import sqlalchemy
-
 
 from sqlalchemy_fsm import FSMField, transition
 from sqlalchemy_fsm.exc import (
@@ -22,7 +20,7 @@ class BlogPostWithConditions(Base):
 
     def __init__(self, *args, **kwargs):
         self.state = "new"
-        super(BlogPostWithConditions, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def model_condition(self):
         return True
@@ -45,21 +43,23 @@ class BlogPostWithConditions(Base):
         pass
 
 
-class TestConditional(unittest.TestCase):
-    def setUp(self):
-        self.model = BlogPostWithConditions()
+class TestConditional:
+    @pytest.fixture
+    def model(self):
+        return BlogPostWithConditions()
 
-    def test_initial_staet(self):
-        self.assertEqual(self.model.state, "new")
+    def test_initial_state(self, model):
+        assert model.state == "new"
 
-    def test_known_transition_should_succeed(self):
-        self.assertTrue(self.model.published.can_proceed())
-        self.model.published.set()
-        self.assertEqual(self.model.state, "published")
+    def test_known_transition_should_succeed(self, model):
+        assert model.published.can_proceed()
+        model.published.set()
+        assert model.state == "published"
 
-    def test_unmet_condition(self):
-        self.model.published.set()
-        self.assertEqual(self.model.state, "published")
-        self.assertFalse(self.model.destroyed.can_proceed())
-        self.assertRaises(PreconditionError, self.model.destroyed.set)
-        self.assertEqual(self.model.state, "published")
+    def test_unmet_condition(self, model):
+        model.published.set()
+        assert model.state == "published"
+        assert not model.destroyed.can_proceed()
+        with pytest.raises(PreconditionError):
+            model.destroyed.set()
+        assert model.state == "published"

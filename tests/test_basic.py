@@ -14,7 +14,7 @@ class BlogPost(Base):
 
     def __init__(self, *args, **kwargs):
         self.state = "new"
-        super(BlogPost, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     @transition(source="new", target="published")
     def published(self):
@@ -26,7 +26,7 @@ class BlogPost(Base):
 
     @transition(source="new", target="removed")
     def removed(self):
-        raise Exception("No rights to delete %s" % self)
+        raise RuntimeError(f"No rights to delete {self}")
 
     @transition(source=["published", "hidden"], target="stolen")
     def stolen(self):
@@ -37,7 +37,7 @@ class BlogPost(Base):
         pass
 
 
-class TestFSMField(object):
+class TestFSMField:
     @pytest.fixture
     def model(self):
         return BlogPost()
@@ -68,9 +68,8 @@ class TestFSMField(object):
         assert "Unable to switch from" in str(err)
 
     def test_state_non_changed_after_fail(self, model):
-        with pytest.raises(Exception) as err:
+        with pytest.raises(RuntimeError, match="No rights to delete"):
             model.removed.set()
-        assert "No rights to delete" in str(err)
         assert model.removed.can_proceed()
         assert model.state == "new"
 
@@ -138,14 +137,14 @@ class InvalidModel(Base):
     def __init__(self, *args, **kwargs):
         self.state = "new"
         self.action = "no"
-        super(InvalidModel, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     @transition(source="new", target="no")
     def validated(self):
         pass
 
 
-class TestInvalidModel(object):
+class TestInvalidModel:
     def test_two_fsmfields_in_one_model_not_allowed(self):
         model = InvalidModel()
         with pytest.raises(SetupError) as err:
@@ -160,18 +159,18 @@ class Document(Base):
 
     def __init__(self, *args, **kwargs):
         self.status = "new"
-        super(Document, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     @transition(source="new", target="published")
     def published(self):
         pass
 
 
-class TestDocument(object):
+class TestDocument:
     def test_any_state_field_name_allowed(self):
         model = Document()
         model.published.set()
-        assert model.status == "published"
+        assert model.status == "published"  # pyright: ignore[reportGeneralTypeIssues]
 
 
 class NullSource(Base):
@@ -197,7 +196,7 @@ class NullSource(Base):
         pass
 
 
-class TestNullSource(object):
+class TestNullSource:
     @pytest.fixture
     def model(self):
         return NullSource()

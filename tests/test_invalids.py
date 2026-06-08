@@ -1,8 +1,7 @@
 import pytest
 import sqlalchemy
 
-from sqlalchemy_fsm import exc, FSMField, transition
-
+from sqlalchemy_fsm import FSMField, exc, transition
 
 from .conftest import Base
 
@@ -27,7 +26,7 @@ def test_not_fsm():
 
 def test_not_transition():
     with pytest.raises(AttributeError):
-        NotFsm.not_transition.can_proceed()
+        NotFsm.not_transition.can_proceed()  # pyright: ignore[reportFunctionMemberAccess]
 
 
 class TooMuchFsm(Base):
@@ -48,13 +47,12 @@ def test_too_much_fsm():
 
 
 def test_transition_raises_on_unknown():
-    class MyCallable(object):
+    class MyCallable:
         def __call__(*args):
             pass
 
+    wrapper = transition(source="*", target="blah")
     with pytest.raises(NotImplementedError) as err:
-
-        wrapper = transition(source="*", target="blah")
         wrapper(MyCallable())
 
     assert "Do not know how to" in str(err)
@@ -63,7 +61,7 @@ def test_transition_raises_on_unknown():
 def test_transition_raises_on_invalid_state():
     with pytest.raises(NotImplementedError) as err:
 
-        @transition(source=42, target="blah")
+        @transition(source=42, target="blah")  # pyright: ignore[reportArgumentType]
         def func1():
             pass
 
@@ -71,7 +69,7 @@ def test_transition_raises_on_invalid_state():
 
     with pytest.raises(NotImplementedError) as err:
 
-        @transition(source="*", target=42)
+        @transition(source="*", target=42)  # pyright: ignore[reportArgumentType]
         def func2():
             pass
 
@@ -79,7 +77,7 @@ def test_transition_raises_on_invalid_state():
 
     with pytest.raises(NotImplementedError) as err:
 
-        @transition(source=["str", 42], target="blah")
+        @transition(source=["str", 42], target="blah")  # pyright: ignore[reportArgumentType]
         def func3():
             pass
 
@@ -101,10 +99,9 @@ class MisconfiguredTransitions(Base):
     @transition(source="*", target="blah", conditions=[one_arg_condition()])
     def change_state(self):
         """Condition accepts one arg, state handler doesn't -> exception."""
-        pass
 
     @transition(source="*", target="blah")
-    class MultiHandlerTransition(object):
+    class MultiHandlerTransition:
         """The system won't know which transition{1,2} handler to chose."""
 
         @transition()
@@ -116,7 +113,7 @@ class MisconfiguredTransitions(Base):
             pass
 
     @transition(source="*", target="blah")
-    class IncompatibleTargets(object):
+    class IncompatibleTargets:
         """The system won't know which transition{1,2} handler to chose."""
 
         @transition(target="not-blah")
@@ -124,7 +121,7 @@ class MisconfiguredTransitions(Base):
             pass
 
     @transition(source=["src1", "src2"], target="blah")
-    class IncompatibleSources(object):
+    class IncompatibleSources:
         """The system won't know which transition{1,2} handler to chose."""
 
         @transition(source=["src3", "src4"])
@@ -132,7 +129,7 @@ class MisconfiguredTransitions(Base):
             pass
 
     @transition(source="*", target="blah")
-    class NoConflictDueToPreconditionArgCount(object):
+    class NoConflictDueToPreconditionArgCount:
         @transition(conditions=[lambda self, instance, arg1: True])
         def change_state(self, instance, arg1):
             pass
@@ -142,16 +139,18 @@ class MisconfiguredTransitions(Base):
             pass
 
 
-class TestMisconfiguredTransitions(object):
+class TestMisconfiguredTransitions:
     @pytest.fixture
     def model(self):
         return MisconfiguredTransitions()
 
     def test_misconfigured_transitions(self, model):
-        with pytest.raises(exc.SetupError) as err:
-            with pytest.warns(UserWarning):
-                model.change_state.set(42)
-        assert "Mismatch beteen args accepted" in str(err)
+        with (
+            pytest.raises(exc.SetupError) as err,
+            pytest.warns(UserWarning, match="Failure to validate handler call args"),
+        ):
+            model.change_state.set(42)
+        assert "Mismatch between args accepted" in str(err)
 
     def test_multi_transition_handlers(self, model):
         with pytest.raises(exc.SetupError) as err:
@@ -161,12 +160,12 @@ class TestMisconfiguredTransitions(object):
     def test_incompatible_targets(self, model):
         with pytest.raises(exc.SetupError) as err:
             model.IncompatibleTargets.set()
-        assert "are not compatable" in str(err)
+        assert "are not compatible" in str(err)
 
     def test_incompatable_sources(self, model):
         with pytest.raises(exc.SetupError) as err:
             model.IncompatibleSources.set()
-        assert "are not compatable" in str(err)
+        assert "are not compatible" in str(err)
 
     def test_no_conflict_due_to_precondition_arg_count(self, model):
         assert model.NoConflictDueToPreconditionArgCount.can_proceed()
@@ -176,7 +175,7 @@ def test_unexpected_is__type(session):
     model = MisconfiguredTransitions()
     session.add(model)
     session.commit()
-    with pytest.warns(UserWarning) as warn:
+    with pytest.warns(UserWarning, match="Unexpected is_ argument") as warn:
         result = (
             session.query(MisconfiguredTransitions)
             .filter(MisconfiguredTransitions.change_state.is_("hello world"))

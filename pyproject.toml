@@ -1,0 +1,142 @@
+[project]
+name = "sqlalchemy-fsm"
+dynamic = ["version"]
+description = "Declarative finite state machine for SQLAlchemy models — typed, tested, drop-in for both SQLAlchemy 1.4 and 2.x."
+authors = [
+    {name = "Ilja Orlovs", email = "vrghost@gmail.com"},
+]
+maintainers = [
+    {name = "Ilja Orlovs", email = "vrghost@gmail.com"},
+]
+license = {file = "LICENSE"}
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = [
+    "sqlalchemy",
+    "fsm",
+    "finite-state-machine",
+    "state-machine",
+    "state-management",
+    "workflow",
+    "transitions",
+    "orm",
+    "declarative",
+    "django-fsm",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Database",
+    "Topic :: Database :: Front-Ends",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "SQLAlchemy>=1.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/IljaOrlovs/sqlalchemy-fsm"
+Documentation = "https://github.com/IljaOrlovs/sqlalchemy-fsm#readme"
+Repository = "https://github.com/IljaOrlovs/sqlalchemy-fsm"
+Source = "https://github.com/IljaOrlovs/sqlalchemy-fsm"
+Issues = "https://github.com/IljaOrlovs/sqlalchemy-fsm/issues"
+Changelog = "https://github.com/IljaOrlovs/sqlalchemy-fsm/blob/main/CHANGELOG.md"
+Releases = "https://github.com/IljaOrlovs/sqlalchemy-fsm/releases"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=5.0",
+    "pytest-benchmark>=4.0",
+    "ruff>=0.8",
+    "pyright>=1.1.409",
+    "hypothesis>=6.100",
+]
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.version]
+source = "scm"
+# Tags look like `v1.2.3` — strip the leading `v` for PEP 440 compliance.
+tag_regex = '^v(?P<version>\d+\.\d+\.\d+.*)$'
+# When building outside a tagged commit (CI on main, local dev), fall back
+# to this so the build still succeeds.
+fallback_version = "0.0.0.dev0"
+
+[tool.pdm.build]
+package-dir = "src"
+includes = ["src/sqlalchemy_fsm", "src/sqlalchemy_fsm/py.typed"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 90
+
+[tool.ruff.lint]
+select = [
+    "A",
+    "B",
+    "C",
+    "E",
+    "F",
+    "I",
+    "W",
+    "N",
+    "C4",
+    "T20",
+    "PTH",
+    "UP",
+    "RUF",
+    "SIM",
+    "RET",
+    "PIE",
+    "PT",
+    "PERF",
+    "TC",
+]
+# N802: snake_case method names — codebase uses `is_` etc. on hybrid handles.
+# N818: FSMException is the public exception base class; renaming would break the API.
+ignore = ["N802", "N818"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = [
+    "F401",
+    "E402",
+]
+
+[tool.ruff.lint.isort]
+order-by-type = true
+known-first-party = ["sqlalchemy_fsm", "tests"]
+forced-separate = ["tests"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pyright]
+include = ["src", "tests"]
+exclude = ["**/__pycache__", ".venv", "docs"]
+reportIncompatibleVariableOverride = false
+
+[tool.pytest.ini_options]
+addopts = "-v -l --color=yes --cov=sqlalchemy_fsm --cov-report=term-missing --no-cov-on-fail -m 'not benchmark'"
+testpaths = ["tests"]
+markers = [
+    "benchmark: micro-benchmarks (deselected by default; run with `-m benchmark --benchmark-only`)",
+]

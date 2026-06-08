@@ -1,7 +1,7 @@
-""" FSM SQL column type(s) """
+"""The SA column type that marks a column as FSM-managed."""
 
 from sqlalchemy import types
 
 
 class FSMField(types.String):
-    pass
+    """A `String` column flagged so `@transition` can discover it."""

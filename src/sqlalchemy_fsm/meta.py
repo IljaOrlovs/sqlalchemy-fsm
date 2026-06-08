@@ -1,21 +1,35 @@
-"""FSM meta object."""
+"""`FSMMeta` — the validated descriptor attached to every `@transition`."""
 
 import collections.abc
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from . import util
 
 
-class FSMMeta(object):
-
+class FSMMeta:
     __slots__ = (
-        "target",
-        "conditions",
-        "sources",
         "bound_cls",
+        "conditions",
         "extra_call_args",
+        "sources",
+        "target",
     )
 
-    def __init__(self, source, target, conditions, extra_args, bound_cls):
+    bound_cls: type
+    conditions: tuple[Callable[..., Any], ...]
+    extra_call_args: tuple[Any, ...]
+    sources: frozenset[str | None]
+    target: str | None
+
+    def __init__(
+        self,
+        source: Any,
+        target: str | None,
+        conditions: Iterable[Callable[..., Any]],
+        extra_args: Iterable[Any],
+        bound_cls: type,
+    ) -> None:
         self.bound_cls = bound_cls
         self.conditions = tuple(conditions)
         self.extra_call_args = tuple(extra_args)
@@ -28,7 +42,7 @@ class FSMMeta(object):
             self.target = None
 
         if util.is_valid_source_state(source):
-            all_sources = (source,)
+            all_sources: tuple[Any, ...] = (source,)
         elif isinstance(source, collections.abc.Iterable):
             all_sources = tuple(source)
 
@@ -39,17 +53,19 @@ class FSMMeta(object):
 
         self.sources = frozenset(all_sources)
 
-    def get_bound(self, sqlalchemy_handle, set_func, extra_args):
+    def get_bound(
+        self,
+        sqlalchemy_handle: Any,
+        set_func: Callable[..., Any],
+        extra_args: tuple[Any, ...],
+    ) -> Any:
         return self.bound_cls(self, sqlalchemy_handle, set_func, extra_args)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
-            "<{} sources={!r} target={!r} conditions={!r} "
-            "extra call args={!r}>".format(
-                self.__class__.__name__,
-                self.sources,
-                self.target,
-                self.conditions,
-                self.extra_call_args,
-            )
+            f"<{self.__class__.__name__} "
+            f"sources={self.sources!r} "
+            f"target={self.target!r} "
+            f"conditions={self.conditions!r} "
+            f"extra call args={self.extra_call_args!r}>"
         )

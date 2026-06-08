@@ -1,19 +1,23 @@
-"""Caching tools/classes"""
+"""Memoization helpers for keyed computations."""
 
 import weakref
+from collections.abc import Callable, MutableMapping
+from dataclasses import dataclass
+from typing import Generic, TypeVar
+
+K = TypeVar("K")
+V = TypeVar("V")
 
 
-class DictCache(object):
-    """Generic object that uses dict-like object for caching."""
+@dataclass(slots=True)
+class DictCache(Generic[K, V]):
+    """Lazy memoizer over an arbitrary mapping (dict, WeakValueDictionary…)."""
 
-    __slots__ = ("cache", "get_default")
+    cache: MutableMapping[K, V]
+    get_default: Callable[[K], V]
 
-    def __init__(self, dict_object, get_default):
-        self.cache = dict_object
-        self.get_default = get_default
-
-    def get_value(self, key):
-        """A method is faster than __getitem__"""
+    def get_value(self, key: K) -> V:
+        # get/except is faster than `in` + lookup on the hot path.
         try:
             return self.cache[key]
         except KeyError:
@@ -22,11 +26,11 @@ class DictCache(object):
             return out
 
 
-def weak_value_cache(get_func):
-    """A decorator that makes a new dict_cache using function provided as value getter"""
+def weak_value_cache(get_func: Callable[[K], V]) -> DictCache[K, V]:
+    """Cache decorator backed by a `WeakValueDictionary` — values may be GC'd."""
     return DictCache(weakref.WeakValueDictionary(), get_func)
 
 
-def dict_cache(get_func):
-    """Generic dict cache decorator"""
+def dict_cache(get_func: Callable[[K], V]) -> DictCache[K, V]:
+    """Cache decorator backed by a plain `dict` — values persist for process lifetime."""
     return DictCache({}, get_func)

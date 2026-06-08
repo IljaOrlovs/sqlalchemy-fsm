@@ -168,6 +168,10 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
+# PDM
+.pdm-python
+.pdm-build/
+
 # Environments
 .env
 .venv
@@ -281,3 +285,4 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/vim,python,windows,linux,osx,sublimetext,git
+.*_cache/
