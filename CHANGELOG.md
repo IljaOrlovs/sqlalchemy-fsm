@@ -28,9 +28,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hooks Alembic's autogenerate to emit drop/add ops when the legal state set
   changes. Available as an optional install: `pip install sqlalchemy-fsm[alembic]`.
 
+- `FSMField["a", "b", "c"]` subscript syntax declares a closed set of legal
+  states. When present, the package validates the model's transition graph
+  at SA `mapper_configured` time and raises `SetupError` on:
+  - unknown state (transition references a state not in the declared set),
+  - incomplete coverage (declared state never referenced),
+  - or an unreachable state (no forward path from the column's `default=`).
+  Wildcards (`source="*"`) count as edges from every declared state.
+  Plain `FSMField` (no subscript) remains supported and skips validation.
+  `validate_fsm(Model)` is also exposed for explicit invocation.
+
 ### Internal
 - Dev deps gain `pytest-asyncio`, `aiosqlite`, `greenlet`, and `alembic` for
   async + Alembic integration tests.
+- New `sqlalchemy_fsm.introspection` module factors out the transition-graph
+  walk shared by the validator and the optional extras.
 
 ## [2.2.0] - 2026-06-08
 

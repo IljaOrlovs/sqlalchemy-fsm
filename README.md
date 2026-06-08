@@ -96,6 +96,47 @@ post.publish.set()
 
 Conditions must be side-effect-free — `can_proceed()` evaluates them too.
 
+## Declared states & startup validation
+
+The subscript form `FSMField["a", "b", "c"]` declares the closed set of
+legal states. When present, the package validates the transition graph
+at SA mapper-configuration time and raises `SetupError` if it doesn't
+match:
+
+```python
+class BlogPost(Base):
+    __tablename__ = "blog_post"
+    id = sa.Column(sa.Integer, primary_key=True)
+    state = sa.Column(
+        FSMField["draft", "published", "archived"],
+        nullable=False,
+        default="draft",
+    )
+
+    @transition(source="draft", target="published")
+    def publish(self): ...
+
+    @transition(source=["draft", "published"], target="archived")
+    def archive(self): ...
+```
+
+Three properties are checked:
+
+- **Correct** — every state referenced by a transition is in the
+  declared set. (Catches typos like `target="publsihed"`.)
+- **Complete** — every declared state is used somewhere (the column's
+  `default=` counts as a use).
+- **Reachable** — every declared state is reachable along forward
+  edges from the column's `default=`. (`source="*"` wildcards count as
+  edges from every declared state.)
+
+A typed `FSMField[...]` column must declare a scalar `default=<state>`
+so reachability can be evaluated. Plain `FSMField` (no subscript)
+remains supported and skips validation entirely.
+
+Call `sqlalchemy_fsm.validate_fsm(MyModel)` explicitly if you want to
+run the check yourself (e.g. from a unit test).
+
 ## Permissions (RBAC)
 
 `permissions=` accepts callables that gate the transition for authorization,

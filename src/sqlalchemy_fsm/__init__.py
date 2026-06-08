@@ -3,6 +3,14 @@ from importlib.metadata import PackageNotFoundError, version
 from . import events, exc
 from .sqltypes import FSMField
 from .transition import transition
+from .validation import (
+    _register_mapper_listener as _register_fsm_validator,
+)
+from .validation import (
+    validate_fsm,
+)
+
+_register_fsm_validator()
 
 try:
     __version__ = version("sqlalchemy-fsm")
