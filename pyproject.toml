@@ -110,5 +110,8 @@ exclude = ["**/__pycache__", ".venv", "docs"]
 reportIncompatibleVariableOverride = false
 
 [tool.pytest.ini_options]
-addopts = "-v -l --color=yes --cov=sqlalchemy_fsm --cov-report=term-missing --no-cov-on-fail"
+addopts = "-v -l --color=yes --cov=sqlalchemy_fsm --cov-report=term-missing --no-cov-on-fail -m 'not benchmark'"
 testpaths = ["tests"]
+markers = [
+    "benchmark: micro-benchmarks (deselected by default; run with `-m benchmark --benchmark-only`)",
+]

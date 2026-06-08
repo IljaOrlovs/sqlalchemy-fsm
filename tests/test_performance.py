@@ -5,6 +5,9 @@ import sqlalchemy_fsm
 
 from .conftest import Base
 
+# Whole module is opt-in. Run with: `pdm run pytest -m benchmark --benchmark-only`
+pytestmark = pytest.mark.benchmark
+
 
 class Benchmarked(Base):
     __tablename__ = "benchmark_test"
@@ -42,10 +45,6 @@ class Benchmarked(Base):
             pass
 
 
-# Only enable this when profiling
-
-
-@pytest.mark.skip
 class TestPerformanceSimple:
     @pytest.fixture
     def model(self, session):
