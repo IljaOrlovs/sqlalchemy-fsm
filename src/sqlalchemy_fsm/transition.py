@@ -141,10 +141,9 @@ class FsmTransition(InspectionAttrInfo):
             return ClassBoundFsmTransition(
                 self.meta, sql_alchemy_handle, self.set_fn, owner
             )
-        else:
-            return InstanceBoundFsmTransition(
-                self.meta, sql_alchemy_handle, self.set_fn, owner, instance
-            )
+        return InstanceBoundFsmTransition(
+            self.meta, sql_alchemy_handle, self.set_fn, owner, instance
+        )
 
 
 def transition(

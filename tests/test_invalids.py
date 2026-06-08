@@ -51,8 +51,8 @@ def test_transition_raises_on_unknown():
         def __call__(*args):
             pass
 
+    wrapper = transition(source="*", target="blah")
     with pytest.raises(NotImplementedError) as err:
-        wrapper = transition(source="*", target="blah")
         wrapper(MyCallable())
 
     assert "Do not know how to" in str(err)
@@ -99,7 +99,6 @@ class MisconfiguredTransitions(Base):
     @transition(source="*", target="blah", conditions=[one_arg_condition()])
     def change_state(self):
         """Condition accepts one arg, state handler doesn't -> exception."""
-        pass
 
     @transition(source="*", target="blah")
     class MultiHandlerTransition:
@@ -146,9 +145,11 @@ class TestMisconfiguredTransitions:
         return MisconfiguredTransitions()
 
     def test_misconfigured_transitions(self, model):
-        with pytest.raises(exc.SetupError) as err:
-            with pytest.warns(UserWarning):
-                model.change_state.set(42)
+        with (
+            pytest.raises(exc.SetupError) as err,
+            pytest.warns(UserWarning, match="Failure to validate handler call args"),
+        ):
+            model.change_state.set(42)
         assert "Mismatch between args accepted" in str(err)
 
     def test_multi_transition_handlers(self, model):
@@ -174,7 +175,7 @@ def test_unexpected_is__type(session):
     model = MisconfiguredTransitions()
     session.add(model)
     session.commit()
-    with pytest.warns(UserWarning) as warn:
+    with pytest.warns(UserWarning, match="Unexpected is_ argument") as warn:
         result = (
             session.query(MisconfiguredTransitions)
             .filter(MisconfiguredTransitions.change_state.is_("hello world"))

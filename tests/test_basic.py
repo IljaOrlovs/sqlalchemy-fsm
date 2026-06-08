@@ -26,7 +26,7 @@ class BlogPost(Base):
 
     @transition(source="new", target="removed")
     def removed(self):
-        raise Exception(f"No rights to delete {self}")
+        raise RuntimeError(f"No rights to delete {self}")
 
     @transition(source=["published", "hidden"], target="stolen")
     def stolen(self):
@@ -68,9 +68,8 @@ class TestFSMField:
         assert "Unable to switch from" in str(err)
 
     def test_state_non_changed_after_fail(self, model):
-        with pytest.raises(Exception) as err:
+        with pytest.raises(RuntimeError, match="No rights to delete"):
             model.removed.set()
-        assert "No rights to delete" in str(err)
         assert model.removed.can_proceed()
         assert model.state == "new"
 

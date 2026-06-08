@@ -22,7 +22,7 @@ def column_cache(table_class: type) -> Any:
 
     if len(fsm_fields) == 0:
         raise exc.SetupError("No FSMField found in model")
-    elif len(fsm_fields) > 1:
+    if len(fsm_fields) > 1:
         raise exc.SetupError(f"More than one FSMField found in model ({fsm_fields})")
     return fsm_fields[0]
 
@@ -179,12 +179,11 @@ class TransitionStateArithmetics:
 
         if "*" in sources_a:
             return sources_b
-        elif "*" in sources_b:
+        if "*" in sources_b:
             return sources_a
-        elif sources_a.issuperset(sources_b):
+        if sources_a.issuperset(sources_b):
             return sources_a.intersection(sources_b)
-        else:
-            return False
+        return False
 
     def target_intersection(self) -> str | None:
         target_a = self.meta_a.target
@@ -219,8 +218,9 @@ def inherited_bound_classes(key: tuple[type, "meta.FSMMeta"]) -> type:
                 attr = getattr(child_cls, name)
                 if attr._sa_fsm_meta:
                     sub_handlers.append((name, attr))
-            except AttributeError:
-                # Skip non-fsm methods
+            except AttributeError:  # noqa: PERF203
+                # Skip non-fsm methods — try/except is the most natural way
+                # to filter for the `_sa_fsm_meta` attribute over a dir() walk.
                 continue
         return sub_handlers
 

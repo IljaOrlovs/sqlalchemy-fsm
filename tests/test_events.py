@@ -51,10 +51,7 @@ class TestEventListener:
 
         for handle_name in ("state_a", "state_b", "state_a", "state_a", "state_b"):
             expected_result.append((model.state, handle_name))
-            if handle_name == "state_a":
-                handle = model.state_a
-            else:
-                handle = model.state_b
+            handle = model.state_a if handle_name == "state_a" else model.state_b
             handle.set()
             assert listener_result == expected_result
 
@@ -152,18 +149,12 @@ class TestTransitionClassEvents:
 
         for handle_name in ("state_a", "state_b", "state_a", "state_a", "state_b"):
             expected_result.append(handle_name)
-            if handle_name == "state_a":
-                handle = model.state_a
-            else:
-                handle = model.state_b
+            handle = model.state_a if handle_name == "state_a" else model.state_b
             handle.set()
             assert listener_result == expected_result
             model.StateClass.set()
 
-            if handle_name == "state_a":
-                expected_side = "from_a"
-            else:
-                expected_side = "from_b"
+            expected_side = "from_a" if handle_name == "state_a" else "from_b"
 
             expected_result.append("state_class")
 
