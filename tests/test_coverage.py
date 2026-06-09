@@ -40,7 +40,7 @@ from sqlalchemy_fsm.introspection import (
     _edges_from_meta,
 )
 from sqlalchemy_fsm.meta import FSMMeta
-from sqlalchemy_fsm.transition import sql_equality_cache
+from sqlalchemy_fsm.transition import sql_equality_for
 
 from .conftest import Base
 
@@ -113,36 +113,7 @@ class TestBoundFSMBaseAbstract:
             getattr(base, method)((), {})
 
 
-# --- bound: backwards-compat get_call_iface_error instance method --------
-
-
-class _CompatModel(Base):
-    __tablename__ = "compat_iface"
-    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
-    state = sqlalchemy.Column(FSMField)
-
-    def __init__(self, *a, **kw):
-        self.state = "new"
-        super().__init__(*a, **kw)
-
-    @transition(source="new", target="done")
-    def finish(self):
-        pass
-
-
-class TestGetCallIfaceErrorCompat:
-    def test_instance_method_wraps_module_helper(self):
-        inst = _CompatModel()
-        bound_meta = inst.finish._sa_fsm_bound_meta
-
-        def fn(a, b):
-            return True
-
-        assert bound_meta.get_call_iface_error(fn, (1, 2), {}) is None
-        assert bound_meta.get_call_iface_error(fn, (1,), {}) is not None
-
-
-# --- bound: async eval callables TypeError warning + transition_possible_async
+# --- bound: async eval callables TypeError warning ----------------------
 
 
 class _AsyncIfaceDoc(Base):
@@ -176,13 +147,6 @@ class TestAsyncEvalCallableArgMismatch:
         result, caught = asyncio.run(run())
         assert result is False
         assert any("cannot be invoked" in str(w.message) for w in caught)
-
-    def test_transition_possible_async_proxy(self):
-        doc = _AsyncIfaceDoc()
-        bound_meta = doc.go._sa_fsm_bound_meta
-        assert bound_meta.transition_possible_async() is True
-        doc.state = "elsewhere"
-        assert bound_meta.transition_possible_async() is False
 
 
 # --- bound: async class-transition dispatch (AsyncBoundFSMClass) ---------
@@ -373,16 +337,11 @@ class TestBoundFSMClassTargetMismatch:
             _ = bound_meta.target_state
 
 
-# --- bound: column_cache distinct exception types -------------------------
+# --- bound: single_fsm_column distinct exception types -------------------
 
 
-class TestColumnCacheExceptions:
+class TestSingleFsmColumnExceptions:
     def test_no_fsm_column(self):
-        class _NoFsm:
-            pass
-
-        # Build a fake mapped-like class — use a real declarative one with
-        # no FSMField to drive `column_cache`.
         Base2 = declarative_base()
 
         class _Plain(Base2):
@@ -390,7 +349,7 @@ class TestColumnCacheExceptions:
             id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
 
         with pytest.raises(NoFSMColumnError):
-            _bound.column_cache.get_value(_Plain)
+            _bound.single_fsm_column(_Plain)
 
     def test_multiple_fsm_columns(self):
         Base2 = declarative_base()
@@ -402,16 +361,16 @@ class TestColumnCacheExceptions:
             b = sqlalchemy.Column(FSMField)
 
         with pytest.raises(MultipleFSMColumnsError):
-            _bound.column_cache.get_value(_Many)
+            _bound.single_fsm_column(_Many)
 
 
-# --- transition: sql_equality_cache rejects empty target ------------------
+# --- transition: sql_equality_for rejects empty target -------------------
 
 
 class TestSqlEqualityCacheEmptyTarget:
     def test_raises_on_missing_target(self):
         with pytest.raises(SetupError, match="Target must be defined"):
-            sql_equality_cache.get_value((None, None))
+            sql_equality_for(None, None)
 
 
 # --- meta: invalid target -------------------------------------------------
@@ -777,15 +736,24 @@ class TestAlembicComparator:
     def test_skips_when_inspector_does_not_support_check_constraints(self):
         table, _ = self._make_table_with_fsm("t_ni", {"a", "b"})
         ops = self._make_ops()
-        _alembic_extras.compare_fsm_check(
-            self._make_autogen_ctx(NotImplementedError()),
-            ops,
-            None,
-            "t_ni",
-            table,
-            table,
-        )
+        # Reset the one-shot dedup so this test sees the warning regardless
+        # of ordering with other dialect-name=None tests.
+        _alembic_extras._NO_CHECK_INTROSPECTION_WARNED.clear()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _alembic_extras.compare_fsm_check(
+                self._make_autogen_ctx(NotImplementedError()),
+                ops,
+                None,
+                "t_ni",
+                table,
+                table,
+            )
         assert ops.ops == []
+        assert any(
+            "does not implement get_check_constraints" in str(w.message)
+            for w in caught
+        )
 
     def test_noop_when_neither_side_has_check(self):
         from sqlalchemy import Column, Integer, MetaData, Table

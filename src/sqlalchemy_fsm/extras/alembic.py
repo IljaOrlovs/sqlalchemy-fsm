@@ -40,6 +40,7 @@ context.configure(target_metadata=target_metadata, ...)
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import CheckConstraint
@@ -230,6 +231,7 @@ def compare_fsm_check(
     try:
         db_checks = insp.get_check_constraints(table_name)
     except NotImplementedError:
+        _warn_no_check_introspection(insp)
         return
 
     dialect = _resolve_dialect(autogen_context, insp)
@@ -287,6 +289,23 @@ def register_autogenerate_comparator() -> None:
 
 def _normalize_sqltext(text: str) -> str:
     return " ".join(text.split()).strip().lower()
+
+
+_NO_CHECK_INTROSPECTION_WARNED: set[str] = set()
+
+
+def _warn_no_check_introspection(insp: Any) -> None:
+    """One-shot warning per dialect name so users notice silent no-ops."""
+    dialect_name = getattr(getattr(insp, "bind", None), "dialect", None)
+    name = getattr(dialect_name, "name", repr(dialect_name))
+    if name in _NO_CHECK_INTROSPECTION_WARNED:
+        return
+    _NO_CHECK_INTROSPECTION_WARNED.add(name)
+    warnings.warn(
+        f"alembic dialect {name!r} does not implement get_check_constraints(); "
+        f"sqlalchemy-fsm autogenerate cannot detect CHECK drift on this backend.",
+        stacklevel=3,
+    )
 
 
 def _resolve_dialect(autogen_context: Any, insp: Any) -> Any:

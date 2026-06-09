@@ -14,7 +14,7 @@ from . import cache, events, exc, meta
 from .sqltypes import FSMField
 
 
-@cache.dict_cache
+@cache.weak_key_cache
 def fsm_columns_cache(table_class: type) -> tuple[Any, ...]:
     """All FSMField-typed columns on `table_class`, in column declaration order."""
     return tuple(
@@ -54,17 +54,6 @@ def resolve_handle(
     if column_ref is None:
         column_ref = single_fsm_column(table_class)
     return SqlAlchemyHandle(table_class, column_ref, record)
-
-
-# Back-compat shim. External code (and tests) sometimes reach for
-# `column_cache` directly — keep the import working but route it through
-# the new single-column resolver.
-class _ColumnCacheShim:
-    def get_value(self, table_class: type) -> Any:
-        return single_fsm_column(table_class)
-
-
-column_cache = _ColumnCacheShim()
 
 
 @dataclass(slots=True)
@@ -234,16 +223,6 @@ class BoundFSMFunction(BoundFSMBase):
             self.meta.extra_call_args + self.extra_call_args + (self.sqla_handle.record,)
         )
 
-    # Back-compat for callers (e.g. subclasses or tests) that referenced the
-    # old method name. New code should use the module-level `_call_iface_error`.
-    def get_call_iface_error(
-        self,
-        fn: Callable[..., Any],
-        args: Iterable[Any],
-        kwargs: Mapping[str, Any],
-    ) -> TypeError | None:
-        return _call_iface_error(fn, tuple(args), kwargs)
-
     def _merged_args(self, args: Iterable[Any]) -> tuple[Any, ...]:
         return self.my_args if not args else self.my_args + tuple(args)
 
@@ -380,9 +359,6 @@ class AsyncBoundFSMFunction(BoundFSMFunction):
             await result
         setattr(sqla_target, self.sqla_handle.column_name, new_state)
         self.sqla_handle.dispatch.after_state_change(source=old_state, target=new_state)
-
-    def transition_possible_async(self) -> bool:
-        return self.transition_possible()
 
     async def awould_succeed(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]

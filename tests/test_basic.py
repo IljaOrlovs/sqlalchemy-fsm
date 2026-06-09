@@ -2,7 +2,7 @@ import pytest
 import sqlalchemy
 
 from sqlalchemy_fsm import FSMField, transition
-from sqlalchemy_fsm.exc import SetupError
+from sqlalchemy_fsm.exc import InvalidSourceStateError, SetupError
 
 from .conftest import Base
 
@@ -63,7 +63,7 @@ class TestFSMField:
 
     def test_unknow_transition_fails(self, model):
         assert not model.hidden.can_proceed()
-        with pytest.raises(NotImplementedError) as err:
+        with pytest.raises(InvalidSourceStateError) as err:
             model.hidden.set()
         assert "Unable to switch from" in str(err)
 

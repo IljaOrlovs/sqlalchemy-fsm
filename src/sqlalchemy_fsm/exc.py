@@ -22,7 +22,7 @@ class MultipleFSMColumnsError(SetupError):
     """The model has more than one FSMField column."""
 
 
-class InvalidSourceStateError(FSMException, NotImplementedError):
+class InvalidSourceStateError(FSMException):
     """The current state isn't in the transition's allowed source set."""
 
 

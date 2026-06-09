@@ -51,16 +51,24 @@ def get_class_bound_dispatcher(target_cls: type) -> Any:
 
 
 class BoundFSMDispatcher:
-    """Per-instance fan-out to SQLAlchemy's class-level event dispatcher."""
+    """Per-instance fan-out to SQLAlchemy's class-level event dispatcher.
+
+    Only the two FSM events (``before_state_change`` / ``after_state_change``)
+    are exposed. Any other attribute access raises ``AttributeError`` so
+    we don't accidentally fan out unrelated SA InstanceEvents (load,
+    refresh, expire, …) through this object.
+    """
+
+    __slots__ = ("_cls_dispatcher", "_ref", "after_state_change", "before_state_change")
 
     def __init__(self, instance: Any) -> None:
-        self.__ref = InstanceRef(instance)
-        self.__cls_dispatcher = get_class_bound_dispatcher(type(instance))
-        # Eagerly materialise the two FSM events so the hot path skips __getattr__.
-        for fsm_handle in ("before_state_change", "after_state_change"):
-            getattr(self, fsm_handle)
-
-    def __getattr__(self, name: str) -> Any:
-        handle = partial(getattr(self.__cls_dispatcher, name), self.__ref)
-        setattr(self, name, handle)
-        return handle
+        self._ref = InstanceRef(instance)
+        self._cls_dispatcher = get_class_bound_dispatcher(type(instance))
+        # Eagerly bind the two FSM events; the hot path then hits a slot,
+        # not a descriptor lookup.
+        self.before_state_change = partial(
+            self._cls_dispatcher.before_state_change, self._ref
+        )
+        self.after_state_change = partial(
+            self._cls_dispatcher.after_state_change, self._ref
+        )

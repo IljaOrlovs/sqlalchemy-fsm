@@ -42,13 +42,29 @@ class FSMCondition(Protocol):
     def __call__(self, instance: Any, /, *args: Any, **kwargs: Any) -> Any: ...
 
 
-@cache.dict_cache
-def sql_equality_cache(key: tuple[Any, str | None]) -> Any:
-    """Memoize `Column == target` — building the SA expression is non-trivial."""
-    (column, target) = key
+@cache.weak_key_cache
+def _column_target_table(column: Any) -> dict[str, Any]:
+    """Per-column dict of ``target_state → (column == target_state)``.
+
+    A WeakKeyDictionary indexed by Column instance, so dynamically-built
+    mapped classes (test factories) don't pin themselves forever via
+    this cache. Inner dict is small (one entry per target) and lives
+    alongside the column.
+    """
+    return {}
+
+
+def sql_equality_for(column: Any, target: str | None) -> Any:
+    """Memoize ``Column == target`` — building the SA expression is non-trivial."""
     if not target:
         raise exc.SetupError("Target must be defined.")
-    return column == target
+    by_target = _column_target_table.get_value(column)
+    try:
+        return by_target[target]
+    except KeyError:
+        expr = column == target
+        by_target[target] = expr
+        return expr
 
 
 class ClassBoundFsmTransition:
@@ -73,9 +89,18 @@ class ClassBoundFsmTransition:
 
     def __call__(self) -> Any:
         """SA filter expression matching rows whose state == this transition's target."""
-        column = self._sa_fsm_sqla_handle.fsm_column
+        handle = self._sa_fsm_sqla_handle
+        if handle is None:
+            # This descriptor was reached via the synthetic dispatcher
+            # subclass walked by `inherited_bound_classes` — there's no
+            # backing column to compare against.
+            raise exc.SetupError(
+                "ClassBoundFsmTransition has no SqlAlchemyHandle; this handle "
+                "was produced by introspection of a class-based transition's "
+                "synthetic dispatcher subclass and is not meant to be invoked."
+            )
         target = self._sa_fsm_meta.target
-        return sql_equality_cache.get_value((column, target))
+        return sql_equality_for(handle.fsm_column, target)
 
     def is_(self, value: Any) -> Any:
         if isinstance(value, bool):

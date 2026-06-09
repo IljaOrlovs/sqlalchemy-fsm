@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking changes
+- `InvalidSourceStateError` no longer inherits from `NotImplementedError`. It
+  inherits from `FSMException` only. Catch sites using
+  `except NotImplementedError` to mean "invalid source state" must switch to
+  `except InvalidSourceStateError` (or `FSMException`).
+- Removed undocumented back-compat shims: `bound.column_cache`,
+  `BoundFSMFunction.get_call_iface_error()`, and
+  `AsyncBoundFSMFunction.transition_possible_async()`. Use
+  `bound.single_fsm_column()`, the module-level `_call_iface_error`,
+  and `transition_possible()` respectively.
+- Removed `transition.sql_equality_cache` (tuple-keyed shim). Use
+  `transition.sql_equality_for(column, target)` instead — same semantics.
+- `events.BoundFSMDispatcher` only exposes `before_state_change` /
+  `after_state_change`. Previously its `__getattr__` would silently
+  return a `partial` for any SA `InstanceEvents` attribute; that
+  surface is now closed.
+
+### Fixed
+- Alembic CHECK constraint now goes through SA's expression compiler
+  rather than f-string interpolation. State strings containing
+  single quotes (`O'Brien`) are escaped correctly, and column names
+  that are SQL reserved words (`order`, `from`) are quoted per the
+  active dialect at DDL emission time — preventing both broken DDL
+  and spurious autogen drift on Postgres/MySQL.
+- Alembic autogenerate now warns once per dialect when
+  `get_check_constraints()` raises `NotImplementedError`, instead of
+  silently disabling drift detection on backends that don't reflect
+  CHECK constraints.
+- `TransitionStateArithmetics.source_intersection()` returns
+  `frozenset | None` (was `frozenset | bool`). The `False` sentinel
+  shared truthiness with the empty frozenset and was fragile against
+  refactors.
+- `BoundFSMFunction._validate_handler_iface` no longer emits a
+  redundant `warnings.warn` before raising `SetupError`; the
+  diagnostic is folded into the error message.
+- `_SIGNATURE_FALLBACK` now evicts in LRU order rather than wiping
+  the entire cache on overflow.
+- `ClassBoundFsmTransition.__call__` now raises `SetupError` with a
+  clear message when invoked on the synthetic dispatcher class
+  produced by class-based transition introspection (previously
+  surfaced as a bare `AttributeError`).
+- `fsm_columns_cache` and the per-column equality cache are now
+  weak-keyed, so dynamically created model classes (test factories,
+  parametrised fixtures) are no longer pinned for the process
+  lifetime.
+
+### Added
+- `FSMCondition` Protocol exported from the package root; the
+  `conditions=` / `permissions=` kwargs are typed against it so
+  pyright catches non-callable mistakes at decoration sites.
+- `cache.weak_key_cache` helper.
+
 ### Added
 - `permissions=[...]` kwarg on `@transition` for RBAC checks, separate from
   `conditions`. Each callable receives `(instance, *args, **kwargs)` forwarded
