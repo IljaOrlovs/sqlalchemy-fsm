@@ -64,13 +64,13 @@ def test_transition_rejects_non_callable():
     """Non-callables (ints, strings, etc.) are a setup error."""
     wrapper = transition(source="*", target="blah")
     with pytest.raises(exc.SetupError, match="expects a callable"):
-        wrapper(42)  # pyright: ignore[reportArgumentType]
+        wrapper(42)  # pyright: ignore[reportArgumentType, reportCallIssue]
 
 
 def test_transition_raises_on_invalid_state():
     with pytest.raises(NotImplementedError) as err:
 
-        @transition(source=42, target="blah")  # pyright: ignore[reportArgumentType]
+        @transition(source=42, target="blah")  # pyright: ignore[reportArgumentType, reportCallIssue]
         def func1():
             pass
 
@@ -78,7 +78,7 @@ def test_transition_raises_on_invalid_state():
 
     with pytest.raises(NotImplementedError) as err:
 
-        @transition(source="*", target=42)  # pyright: ignore[reportArgumentType]
+        @transition(source="*", target=42)  # pyright: ignore[reportArgumentType, reportCallIssue]
         def func2():
             pass
 
@@ -86,7 +86,7 @@ def test_transition_raises_on_invalid_state():
 
     with pytest.raises(NotImplementedError) as err:
 
-        @transition(source=["str", 42], target="blah")  # pyright: ignore[reportArgumentType]
+        @transition(source=["str", 42], target="blah")  # pyright: ignore[reportArgumentType, reportCallIssue]
         def func3():
             pass
 

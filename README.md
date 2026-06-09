@@ -201,28 +201,15 @@ session.query(BlogPost).filter(~BlogPost.publish())         # everything else
 
 ## Events
 
-The library hooks into SQLAlchemy's event system and emits two pairs
-of events around every transition. Pick whichever signature suits
-your listener — both pairs fire on every transition.
-
-**Minimal — `before_state_change` / `after_state_change`.** Just the
-source and target state:
+The library hooks into SQLAlchemy's event system and emits
+`before_transition` and `after_transition` around every transition.
+Listeners receive the row, the transition method name, the source
+and target states, and the `*args` / `**kwargs` passed to `set()` /
+`aset()`:
 
 ```python
 from sqlalchemy.event import listens_for
 
-@listens_for(BlogPost, "after_state_change")
-def on_change(instance, source, target):
-    ...
-```
-
-**Full payload — `before_transition` / `after_transition`.** Adds the
-transition method name and the `*args` / `**kwargs` you passed to
-`set()` / `aset()`. Use these when one listener handles several
-transitions and needs to tell them apart, or wants to log the call
-arguments:
-
-```python
 @listens_for(BlogPost, "after_transition")
 def audit(instance, transition_name, source, target, args, kwargs):
     log.info(
@@ -241,14 +228,14 @@ Remove with `sqlalchemy.event.remove(...)`.
 returns a coroutine that nothing awaits, so its body silently doesn't
 run. Wrap async work in `asyncio.create_task(...)` if you need it.
 
-**`before_state_change` / `before_transition` run before the handler
-and before the column is mutated.** Raising from a before-listener
-cleanly aborts the transition — state is unchanged. **The `after_`
-events run *after* the handler has returned and *after* the column
-has been mutated.** If an after-listener raises, the in-memory state
-has already been overwritten and won't be rolled back; the exception
-still propagates to the caller. Treat the `after_` events as
-best-effort notification, not a transactional gate.
+**`before_transition` runs before the handler and before the column
+is mutated.** Raising from it cleanly aborts the transition — state
+is unchanged. **`after_transition` runs *after* the handler has
+returned and *after* the column has been mutated.** If an
+after-listener raises, the in-memory state has already been
+overwritten and won't be rolled back; the exception still propagates
+to the caller. Treat `after_transition` as best-effort notification,
+not a transactional gate.
 
 ## Transition metadata
 
@@ -290,6 +277,47 @@ for name, fsm_t in available_transitions(post, user=current_user):
 `acan_proceed` on `@async_transition` decorators and stays sync for
 the rest. Pass `column=` on multi-column models to filter to one
 state machine.
+
+## Testing transitions
+
+Every `@transition`-decorated attribute exposes the raw handler as
+`.fn` for tests that want to call or mock it without going through
+the state machinery.
+
+**Call the handler directly.** Bypasses source-state, permission,
+and condition checks — useful when the body has its own side effects
+worth testing in isolation:
+
+```python
+def test_publish_sends_notification(mocker):
+    post = BlogPost()
+    spy = mocker.spy(notifications, "send")
+    BlogPost.publish.fn(post)             # runs body, no guards, no mutation
+    spy.assert_called_once_with(post)
+```
+
+`.fn` is the same callable on the class-bound (`BlogPost.publish.fn`)
+and instance-bound (`post.publish.fn`) wrappers.
+
+**Replace the handler with a mock.** Reach the underlying descriptor
+via `get_transition(Model, name)` and assign `.fn`:
+
+```python
+from sqlalchemy_fsm import get_transition
+
+def test_publish_runs_through_caller(monkeypatch):
+    descriptor = get_transition(BlogPost, "publish")
+    monkeypatch.setattr(descriptor, "fn", lambda self: None)
+
+    post = BlogPost()
+    Service(post).do_publish()
+    assert post.state == "published"   # guards + state mutation still ran
+```
+
+The descriptor is the stable target — `BlogPost.publish` itself
+rebuilds a thin wrapper on every attribute access (so SA filter
+expressions stay clean), but the wrapper reads `fn` from the
+descriptor each time, so the patch propagates.
 
 ## Async (SQLAlchemy 2.x `AsyncSession`)
 
@@ -343,7 +371,7 @@ class-grouped transition is rejected at decoration time.
 The class-bound query helper (`AsyncDoc.publish()` at the class level)
 is a plain SA expression and composes with
 `select(...).where(...)` against an `AsyncSession` identically to the
-sync case. Events (`before_state_change` / `after_state_change`) fire
+sync case. Events (`before_transition` / `after_transition`) fire
 normally; their listeners must still be sync (see Events above).
 
 ## Alembic integration
@@ -440,7 +468,7 @@ SQLAlchemy instead of Django. ([django-fsm] is archived since 2024;
 | Permissions | List of callables; receive `set()` kwargs | One: Django perm string or `(instance, user) -> bool` |
 | Optimistic locking | Use SA `version_id_col` | `ConcurrentTransitionMixin` filters UPDATE by loaded state |
 | Async | `@async_transition`, `aset` / `acan_proceed`, mixed sync/async checks | None |
-| Events | SA `before_state_change`/`after_state_change` (source, target) and `before_transition`/`after_transition` (+ name, args, kwargs) | Django signals `pre_transition` / `post_transition` (name, args, kwargs) |
+| Events | SA `before_transition` / `after_transition` (instance, name, source, target, args, kwargs) | Django signals `pre_transition` / `post_transition` (same payload) |
 | Available-transition helper | `available_transitions(instance, *args, **kwargs)` and async sibling | `get_available_<field>_transitions(user)` |
 | Dynamic target | Class-grouped transitions (dispatch by source) | `RETURN_VALUE(...)` / `GET_STATE(...)` |
 | Proxy class per state | None | `state_choices=` swaps `__class__` |

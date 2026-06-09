@@ -5,7 +5,7 @@
 - `available_transitions(instance, ...)` introspection helper
 """
 
-from typing import cast
+from typing import ClassVar, cast
 
 import pytest
 import sqlalchemy
@@ -170,28 +170,6 @@ class TestRichEvents:
 
         assert seen_states == ["ready"]
 
-    def test_legacy_events_still_fire(self):
-        # Back-compat: the old (source, target) listeners must still work.
-        before_seen, after_seen = [], []
-
-        def before(instance, source, target):
-            before_seen.append((source, target))
-
-        def after(instance, source, target):
-            after_seen.append((source, target))
-
-        sqlalchemy.event.listen(RichEventModel, "before_state_change", before)
-        sqlalchemy.event.listen(RichEventModel, "after_state_change", after)
-        try:
-            obj = RichEventModel()
-            obj.make_ready.set()
-        finally:
-            sqlalchemy.event.remove(RichEventModel, "before_state_change", before)
-            sqlalchemy.event.remove(RichEventModel, "after_state_change", after)
-
-        assert before_seen == [("new", "ready")]
-        assert after_seen == [("new", "ready")]
-
 
 # ---------------------------------------------------------------------------
 # Class-grouped transitions emit the public name, not the sub-handler name
@@ -325,6 +303,118 @@ class AvailAsyncModel(Base):
     @transition(source="draft", target="archived")
     def archive(self):
         pass
+
+
+# ---------------------------------------------------------------------------
+# ParamSpec typing — runtime smoke + type-checker assertions
+# ---------------------------------------------------------------------------
+
+
+class TypedDoc(Base):
+    __tablename__ = "borrowed_typed_doc"
+    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+    state = sqlalchemy.Column(FSMField, default="draft")
+
+    def __init__(self):
+        self.state = "draft"
+
+    @transition(source="draft", target="published")
+    def publish(self, user: str, *, force: bool = False) -> int:
+        return len(user) + int(force)
+
+
+class TestParamSpecRuntime:
+    """Runtime parity for the ParamSpec-typed surface. The actual type
+    precision is exercised by pyright in CI — these tests just pin the
+    runtime behavior that the types describe."""
+
+    def test_fn_returns_handler_value(self):
+        # `.fn` is the raw handler — direct call returns whatever the
+        # handler returns. Guards do NOT run; column NOT mutated.
+        obj = TypedDoc()
+        result = TypedDoc.publish.fn(obj, "alice", force=True)
+        assert result == 6
+        assert cast("str", obj.state) == "draft"
+
+    def test_set_forwards_args_to_handler(self):
+        obj = TypedDoc()
+        obj.publish.set("alice", force=False)
+        assert cast("str", obj.state) == "published"
+
+    def test_can_proceed_accepts_handler_args(self):
+        obj = TypedDoc()
+        assert obj.publish.can_proceed("alice", force=True)
+
+
+# ---------------------------------------------------------------------------
+# .fn exposes the raw handler for unit tests / mocking
+# ---------------------------------------------------------------------------
+
+
+class HandlerExposure(Base):
+    __tablename__ = "borrowed_handler_exposure"
+    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+    state = sqlalchemy.Column(FSMField, default="draft")
+    side_effects: ClassVar[list[str]] = []
+
+    def __init__(self):
+        self.state = "draft"
+
+    @transition(source="draft", target="published")
+    def publish(self):
+        type(self).side_effects.append(f"published-{id(self)}")
+
+
+class TestHandlerExposure:
+    def setup_method(self):
+        HandlerExposure.side_effects.clear()
+
+    def test_class_bound_fn_calls_handler_directly(self):
+        # Bypasses source-state, permission, condition checks. The
+        # column is NOT mutated — the handler just runs.
+        obj = HandlerExposure()
+        HandlerExposure.publish.fn(obj)
+        assert HandlerExposure.side_effects == [f"published-{id(obj)}"]
+        assert cast("str", obj.state) == "draft"  # guard not run
+
+    def test_instance_bound_fn_returns_same_callable(self):
+        obj = HandlerExposure()
+        assert obj.publish.fn is HandlerExposure.publish.fn
+
+    def test_get_transition_returns_descriptor(self):
+        from sqlalchemy_fsm import get_transition
+
+        descriptor = get_transition(HandlerExposure, "publish")
+        assert descriptor.fn is HandlerExposure.publish.fn
+        assert descriptor.set_fn is descriptor.fn  # back-compat alias
+
+    def test_get_transition_raises_on_unknown_name(self):
+        from sqlalchemy_fsm import get_transition
+
+        with pytest.raises(AttributeError, match="no @transition attribute"):
+            get_transition(HandlerExposure, "nope")
+
+    def test_descriptor_fn_is_settable_for_mocking(self, monkeypatch):
+        # Mock the handler via the descriptor; subsequent set() calls
+        # see the replacement because the bound wrapper is rebuilt on
+        # every attribute access.
+        from sqlalchemy_fsm import get_transition
+
+        descriptor = get_transition(HandlerExposure, "publish")
+        calls = []
+
+        def stub(instance):
+            calls.append(instance)
+
+        monkeypatch.setattr(descriptor, "fn", stub)
+
+        obj = HandlerExposure()
+        obj.publish.set()
+
+        assert calls == [obj]
+        assert cast("str", obj.state) == "published"  # guards + mutation still ran
+        # original side effect did NOT fire — the stub replaced the body.
+        assert HandlerExposure.side_effects == []
 
 
 @pytest.mark.asyncio

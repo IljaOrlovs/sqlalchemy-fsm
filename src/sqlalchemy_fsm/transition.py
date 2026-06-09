@@ -3,8 +3,18 @@
 import asyncio
 import inspect as py_inspect
 import warnings
-from collections.abc import Callable, Iterable, Mapping
-from typing import TYPE_CHECKING, Any, Protocol, overload, runtime_checkable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Concatenate,
+    Generic,
+    ParamSpec,
+    Protocol,
+    TypeVar,
+    overload,
+    runtime_checkable,
+)
 
 if TYPE_CHECKING:
     from .column import FSMColumn
@@ -27,6 +37,12 @@ from .meta import FSMMeta
 
 SourceState = str | None | Iterable[str | None]
 
+#: ParamSpec for the handler's user-facing signature (everything after ``self``).
+P = ParamSpec("P")
+#: Handler return type. Preserved on ``.fn`` so direct calls in tests keep it;
+#: ``set()`` / ``aset()`` discard the value and return ``None`` regardless.
+R = TypeVar("R")
+
 
 @runtime_checkable
 class FSMCondition(Protocol):
@@ -37,6 +53,11 @@ class FSMCondition(Protocol):
     permissive on extra args so existing callsites pass without changes,
     but it gives pyright something to anchor on when a non-callable is
     passed by mistake.
+
+    Not parameterized against the handler's `ParamSpec`: pyright can't
+    keep the handler's `P` free at the outer `transition(...)` call
+    *and* bind it from the decoratee, so we keep conditions loose and
+    let the handler/`.fn`/`.set` carry the precision.
     """
 
     def __call__(self, instance: Any, /, *args: Any, **kwargs: Any) -> Any: ...
@@ -81,7 +102,7 @@ def _failure_context(bound_meta: Any, func: Callable[..., Any]) -> dict[str, Any
     }
 
 
-class ClassBoundFsmTransition:
+class ClassBoundFsmTransition(Generic[P, R]):
     __slots__ = (
         "_sa_fsm_meta",
         "_sa_fsm_owner_cls",
@@ -93,7 +114,7 @@ class ClassBoundFsmTransition:
         self,
         meta: FSMMeta,
         sqla_handle: "bound.SqlAlchemyHandle",
-        payload_func: Callable[..., Any],
+        payload_func: Callable[Concatenate[Any, P], R],
         owner_cls: type,
     ) -> None:
         self._sa_fsm_meta = meta
@@ -116,6 +137,18 @@ class ClassBoundFsmTransition:
         target = self._sa_fsm_meta.target
         return sql_equality_for(handle.fsm_column, target)
 
+    @property
+    def fn(self) -> Callable[Concatenate[Any, P], R]:
+        """The raw handler the user decorated — for direct calling in tests.
+
+        ``BlogPost.publish.fn(post)`` runs the body verbatim, skipping
+        source-state, permission, and condition checks. Useful when the
+        body has its own side effects worth testing in isolation. For
+        class-grouped transitions this is the wrapper class; reach for
+        its sub-handlers as `.fn.from_draft` etc.
+        """
+        return self._sa_fsm_transition_fn
+
     def is_(self, value: Any) -> Any:
         if isinstance(value, bool):
             return self().is_(value)
@@ -127,7 +160,7 @@ class ClassBoundFsmTransition:
         return sql_false()
 
 
-class _InstanceBoundBase:
+class _InstanceBoundBase(Generic[P, R]):
     """Shared state + `__call__` for sync and async instance descriptors."""
 
     __slots__ = (
@@ -143,7 +176,7 @@ class _InstanceBoundBase:
         self,
         meta: FSMMeta,
         sqla_handle: "bound.SqlAlchemyHandle",
-        transition_fn: Callable[..., Any],
+        transition_fn: Callable[Concatenate[Any, P], R],
         owner_cls: type,
         instance: Any,
     ) -> None:
@@ -159,14 +192,29 @@ class _InstanceBoundBase:
         bound_meta = self._sa_fsm_bound_meta
         return bound_meta.target_state == bound_meta.current_state
 
+    @property
+    def fn(self) -> Callable[Concatenate[Any, P], R]:
+        """The raw handler the user decorated — for direct calling in tests.
 
-class InstanceBoundFsmTransition(_InstanceBoundBase):
+        ``post.publish.fn(post)`` runs the body verbatim, skipping every
+        guard. Equivalent to the class-bound `BlogPost.publish.fn` —
+        provided here so tests don't have to reach back to the class.
+        """
+        return self._sa_fsm_transition_fn
+
+
+class InstanceBoundFsmTransition(_InstanceBoundBase[P, R]):
     __slots__ = ()
 
-    def set(self, *args: Any, **kwargs: Any) -> None:
+    def set(self, *args: P.args, **kwargs: P.kwargs) -> None:
         """Execute the transition. Raises if the current state, permissions,
         or conditions don't allow it. Mutates the field in memory — commit
-        the session yourself to persist."""
+        the session yourself to persist.
+
+        `*args` / `**kwargs` are forwarded to permissions, conditions,
+        and the handler — typed to match the handler's signature
+        (everything after ``self``).
+        """
         bound_meta = self._sa_fsm_bound_meta
         func = self._sa_fsm_transition_fn
 
@@ -185,14 +233,14 @@ class InstanceBoundFsmTransition(_InstanceBoundBase):
             raise exc.PreconditionError("Preconditions are not satisfied.", **ctx)
         return bound_meta.to_next_state(args, kwargs, transition_name=func.__name__)
 
-    def can_proceed(self, *args: Any, **kwargs: Any) -> bool:
+    def can_proceed(self, *args: P.args, **kwargs: P.kwargs) -> bool:
         # Delegate to `would_succeed` so the result mirrors what `set()`
         # would actually do — including the "exactly one accepted sub-handler"
         # rule for class-based transitions.
         return self._sa_fsm_bound_meta.would_succeed(args, kwargs)
 
 
-class AsyncInstanceBoundFsmTransition(_InstanceBoundBase):
+class AsyncInstanceBoundFsmTransition(_InstanceBoundBase[P, R]):
     """Async sibling of `InstanceBoundFsmTransition`. Exposes `aset` /
     `acan_proceed`, and an awaitable `__call__`.
 
@@ -220,7 +268,7 @@ class AsyncInstanceBoundFsmTransition(_InstanceBoundBase):
                 "call `aset()`/`acan_proceed()` from inside an async function"
             ) from err
 
-    async def aset(self, *args: Any, **kwargs: Any) -> None:
+    async def aset(self, *args: P.args, **kwargs: P.kwargs) -> None:
         """Execute an async transition. Awaits async handlers, conditions,
         and permissions. Mutates the field in memory — commit the session
         yourself to persist."""
@@ -245,20 +293,18 @@ class AsyncInstanceBoundFsmTransition(_InstanceBoundBase):
             args, kwargs, transition_name=func.__name__
         )
 
-    async def acan_proceed(self, *args: Any, **kwargs: Any) -> bool:
+    async def acan_proceed(self, *args: P.args, **kwargs: P.kwargs) -> bool:
         self._require_running_loop()
         return await self._sa_fsm_bound_meta.awould_succeed(args, kwargs)
 
 
-class FsmTransition(InspectionAttrInfo):
+class FsmTransition(Generic[P, R], InspectionAttrInfo):
     """Base descriptor for both sync and async transitions.
 
-    The sync vs async distinction is a runtime property of `meta.is_async`,
-    but static checkers can't see through that — they need a concrete
-    return type on `__get__`. We therefore expose two thin subclasses
-    (`SyncFsmTransition` / `AsyncFsmTransition`) whose only purpose is to
-    override the `__get__` overloads with the concrete instance-bound
-    type. The runtime `__get__` lives here.
+    Generic over the handler's ParamSpec (``P``, every arg after
+    ``self``) and return type (``R``). The runtime ``__get__`` lives
+    here; ``SyncFsmTransition`` / ``AsyncFsmTransition`` exist purely
+    to give pyright a concrete instance-bound return type.
     """
 
     is_attribute = True
@@ -268,7 +314,7 @@ class FsmTransition(InspectionAttrInfo):
     def __init__(
         self,
         meta: FSMMeta,
-        set_function: Callable[..., Any],
+        set_function: Callable[Concatenate[Any, P], R],
         column_ref: "FSMColumn | None" = None,
     ) -> None:
         self.meta = meta
@@ -278,9 +324,26 @@ class FsmTransition(InspectionAttrInfo):
         # FSM column.
         self.column_ref: FSMColumn | None = column_ref
 
+    @property
+    def fn(self) -> Callable[Concatenate[Any, P], R]:
+        """The raw handler — public alias of `set_fn`, for tests.
+
+        Read it to call the body directly; assign to it to swap the
+        handler (e.g. from inside a test via `monkeypatch.setattr`).
+        The descriptor lives at ``MyModel.__dict__["<name>"]``; each
+        attribute access on the model rebuilds the bound wrappers, so
+        a patch on `fn` here propagates to subsequent `set()` calls
+        through the model.
+        """
+        return self.set_fn
+
+    @fn.setter
+    def fn(self, value: Callable[Concatenate[Any, P], R]) -> None:
+        self.set_fn = value
+
     def __get__(
         self, instance: Any, owner: type
-    ) -> "ClassBoundFsmTransition | InstanceBoundFsmTransition | AsyncInstanceBoundFsmTransition":  # noqa: E501
+    ) -> "ClassBoundFsmTransition[P, R] | InstanceBoundFsmTransition[P, R] | AsyncInstanceBoundFsmTransition[P, R]":  # noqa: E501
         try:
             sql_alchemy_handle = owner._sa_fsm_sqlalchemy_handle
         except AttributeError:
@@ -299,36 +362,36 @@ class FsmTransition(InspectionAttrInfo):
         )
 
 
-class SyncFsmTransition(FsmTransition):
+class SyncFsmTransition(FsmTransition[P, R]):
     """Descriptor produced by `@transition` — typed for sync handlers."""
 
     if TYPE_CHECKING:
 
         @overload  # type: ignore[override]
-        def __get__(self, instance: None, owner: Any) -> ClassBoundFsmTransition: ...
+        def __get__(
+            self, instance: None, owner: Any
+        ) -> ClassBoundFsmTransition[P, R]: ...
         @overload
-        def __get__(self, instance: object, owner: Any) -> InstanceBoundFsmTransition: ...
+        def __get__(
+            self, instance: object, owner: Any
+        ) -> InstanceBoundFsmTransition[P, R]: ...
         def __get__(self, instance: Any, owner: Any) -> Any: ...
 
 
-class AsyncFsmTransition(FsmTransition):
+class AsyncFsmTransition(FsmTransition[P, R]):
     """Descriptor produced by `@async_transition` — typed for async handlers."""
 
     if TYPE_CHECKING:
 
         @overload  # type: ignore[override]
-        def __get__(self, instance: None, owner: Any) -> ClassBoundFsmTransition: ...
+        def __get__(
+            self, instance: None, owner: Any
+        ) -> ClassBoundFsmTransition[P, R]: ...
         @overload
         def __get__(
             self, instance: object, owner: Any
-        ) -> AsyncInstanceBoundFsmTransition: ...
+        ) -> AsyncInstanceBoundFsmTransition[P, R]: ...
         def __get__(self, instance: Any, owner: Any) -> Any: ...
-
-
-if TYPE_CHECKING:
-    from typing import TypeVar
-
-    _T = TypeVar("_T", bound=FsmTransition)
 
 
 def _make_transition(
@@ -338,14 +401,14 @@ def _make_transition(
     conditions: Iterable[Callable[..., Any]],
     permissions: Iterable[Callable[..., Any]],
     custom: Mapping[str, Any] | None,
-) -> Callable[[Any], FsmTransition]:
+) -> Callable[[Any], FsmTransition[Any, Any]]:
     fn_cls = bound.AsyncBoundFSMFunction if is_async else bound.BoundFSMFunction
     cls_cls = bound.AsyncBoundFSMClass if is_async else bound.BoundFSMClass
-    transition_cls: type[FsmTransition] = (
+    transition_cls: type[FsmTransition[Any, Any]] = (
         AsyncFsmTransition if is_async else SyncFsmTransition
     )
 
-    def inner(subject: Any) -> FsmTransition:
+    def inner(subject: Any) -> FsmTransition[Any, Any]:
         # Classes go through the sub-handler dispatcher path; anything
         # else callable (function, lambda, functools.partial, callable
         # instance) is treated as a single handler. Non-callables are
@@ -373,21 +436,60 @@ def _make_transition(
     return inner
 
 
+# Inner decorator returned by `transition(...)` / `async_transition(...)`.
+# Two overload arms per Protocol: a real function gets full ParamSpec /
+# return-type precision; a class-grouped transition falls back to `Any`
+# because dispatch-by-source isn't representable in the type system.
+# The Protocols themselves are NOT parameterized — pyright infers P and
+# R at the decoration call site (where the user's function is bound),
+# not at the outer `transition(...)` call.
+
+
+class _SyncTransitionDecorator(Protocol):
+    @overload
+    def __call__(
+        self, subject: Callable[Concatenate[Any, P], R]
+    ) -> SyncFsmTransition[P, R]: ...
+    @overload
+    def __call__(self, subject: type) -> SyncFsmTransition[Any, Any]: ...
+
+
+class _AsyncTransitionDecorator(Protocol):
+    @overload
+    def __call__(
+        self, subject: Callable[Concatenate[Any, P], Awaitable[R]]
+    ) -> AsyncFsmTransition[P, R]: ...
+    @overload
+    def __call__(
+        self, subject: Callable[Concatenate[Any, P], R]
+    ) -> AsyncFsmTransition[P, R]: ...
+    @overload
+    def __call__(self, subject: type) -> AsyncFsmTransition[Any, Any]: ...
+
+
 def transition(
     source: SourceState = "*",
     target: str | None = None,
     conditions: Iterable[FSMCondition] = (),
     permissions: Iterable[FSMCondition] = (),
     custom: Mapping[str, Any] | None = None,
-) -> Callable[[Any], SyncFsmTransition]:
+) -> _SyncTransitionDecorator:
     """Decorate a method as a state transition.
 
     `custom` is a free-form metadata dict — sqlalchemy-fsm ignores it,
     but it's available via `Model.attr.meta.custom` for tools to read
     (admin labels, button text, RBAC tags, etc.). The dict is frozen
     on decoration.
+
+    For type checkers: `@transition` is generic over the handler's
+    ``ParamSpec`` so `.fn`, `.set`, and `.can_proceed` reveal the
+    handler's true signature in editors. Class-grouped transitions
+    (`@transition class publish: ...`) fall back to `Any` because
+    dispatch-by-source isn't representable in the type system.
     """
-    return _make_transition(False, source, target, conditions, permissions, custom)  # type: ignore[return-value]
+    return _make_transition(  # type: ignore[return-value]
+        False, source, target, conditions, permissions, custom
+    )
 
 
 def async_transition(
@@ -396,11 +498,14 @@ def async_transition(
     conditions: Iterable[FSMCondition] = (),
     permissions: Iterable[FSMCondition] = (),
     custom: Mapping[str, Any] | None = None,
-) -> Callable[[Any], AsyncFsmTransition]:
+) -> _AsyncTransitionDecorator:
     """Like `@transition`, but the handler — and any conditions/permissions —
     may be `async def`. Invoke via `await instance.<name>.aset(...)`; only
     works inside a running asyncio event loop. Sync callables remain valid.
 
-    See `transition` for the `custom=` metadata bag.
+    See `transition` for the `custom=` metadata bag and the generic
+    typing model.
     """
-    return _make_transition(True, source, target, conditions, permissions, custom)  # type: ignore[return-value]
+    return _make_transition(  # type: ignore[return-value]
+        True, source, target, conditions, permissions, custom
+    )

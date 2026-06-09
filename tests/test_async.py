@@ -118,12 +118,12 @@ class TestAsyncEvents:
     async def test_events_fire_under_async_session(self, async_session):
         seen: list[tuple] = []
 
-        @listens_for(AsyncDoc, "before_state_change")
-        def _before(instance, source, target):
+        @listens_for(AsyncDoc, "before_transition")
+        def _before(instance, transition_name, source, target, args, kwargs):
             seen.append(("before", source, target))
 
-        @listens_for(AsyncDoc, "after_state_change")
-        def _after(instance, source, target):
+        @listens_for(AsyncDoc, "after_transition")
+        def _after(instance, transition_name, source, target, args, kwargs):
             seen.append(("after", source, target))
 
         try:
@@ -132,8 +132,8 @@ class TestAsyncEvents:
             doc.publish.set()
             await async_session.commit()
         finally:
-            remove(AsyncDoc, "before_state_change", _before)
-            remove(AsyncDoc, "after_state_change", _after)
+            remove(AsyncDoc, "before_transition", _before)
+            remove(AsyncDoc, "after_transition", _after)
 
         assert seen == [
             ("before", "draft", "published"),

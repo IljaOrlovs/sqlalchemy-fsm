@@ -33,15 +33,15 @@ class TestEventListener:
     @pytest.mark.parametrize(
         "event_name",
         [
-            "before_state_change",
-            "after_state_change",
+            "before_transition",
+            "after_transition",
         ],
     )
     def test_events(self, model, event_name):
 
         listener_result = []
 
-        def on_update(instance, source, target):
+        def on_update(instance, transition_name, source, target, args, kwargs):
             listener_result.append((source, target))
 
         sqlalchemy.event.listen(EventModel, event_name, on_update)
@@ -65,8 +65,8 @@ class TestEventListener:
         state_log = []
         insert_log = []
 
-        @sqlalchemy.event.listens_for(EventModel, "after_state_change")
-        def after_state_change(instance, source, target):
+        @sqlalchemy.event.listens_for(EventModel, "after_transition")
+        def after_transition(instance, transition_name, source, target, args, kwargs):
             state_log.append(target)
 
         @sqlalchemy.event.listens_for(EventModel, "before_insert")
@@ -132,8 +132,8 @@ class TestTransitionClassEvents:
     @pytest.mark.parametrize(
         "event_name",
         [
-            "before_state_change",
-            "after_state_change",
+            "before_transition",
+            "after_transition",
         ],
     )
     def test_events(self, model, event_name):
@@ -141,7 +141,7 @@ class TestTransitionClassEvents:
         listener_result = []
 
         @sqlalchemy.event.listens_for(TransitionClassEventModel, event_name)
-        def on_update(instance, source, target):
+        def on_update(instance, transition_name, source, target, args, kwargs):
             listener_result.append(target)
 
         expected_result = []
@@ -174,8 +174,8 @@ class TestEventsLeakage:
     @pytest.mark.parametrize(
         "event_name",
         [
-            "before_state_change",
-            "after_state_change",
+            "before_transition",
+            "after_transition",
         ],
     )
     def test_leakage(self, event_name):
@@ -187,16 +187,16 @@ class TestEventsLeakage:
         joint_result = []
 
         @sqlalchemy.event.listens_for(EventModel, event_name)
-        def on_evt_update(instance, source, target):
+        def on_evt_update(instance, transition_name, source, target, args, kwargs):
             event_result.append(target)
 
         @sqlalchemy.event.listens_for(TransitionClassEventModel, event_name)
-        def on_tr_update(instance, source, target):
+        def on_tr_update(instance, transition_name, source, target, args, kwargs):
             tr_cls_result.append(target)
 
         @sqlalchemy.event.listens_for(TransitionClassEventModel, event_name)
         @sqlalchemy.event.listens_for(EventModel, event_name)
-        def on_both_update(instance, source, target):
+        def on_both_update(instance, transition_name, source, target, args, kwargs):
             joint_result.append(target)
 
         assert len(event_result) == 0

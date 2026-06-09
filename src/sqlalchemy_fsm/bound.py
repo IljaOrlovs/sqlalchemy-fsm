@@ -334,7 +334,6 @@ class BoundFSMFunction(BoundFSMBase):
             self._validate_handler_iface(merged, kwargs)
 
         dispatch = self.sqla_handle.dispatch
-        dispatch.before_state_change(source=old_state, target=new_state)
         dispatch.before_transition(
             transition_name=name,
             source=old_state,
@@ -344,7 +343,6 @@ class BoundFSMFunction(BoundFSMBase):
         )
         self.set_func(*merged, **kwargs)
         setattr(sqla_target, self.sqla_handle.column_name, new_state)
-        dispatch.after_state_change(source=old_state, target=new_state)
         dispatch.after_transition(
             transition_name=name,
             source=old_state,
@@ -411,7 +409,6 @@ class AsyncBoundFSMFunction(BoundFSMFunction):
             self._validate_handler_iface(merged, kwargs)
 
         dispatch = self.sqla_handle.dispatch
-        dispatch.before_state_change(source=old_state, target=new_state)
         dispatch.before_transition(
             transition_name=name,
             source=old_state,
@@ -421,7 +418,6 @@ class AsyncBoundFSMFunction(BoundFSMFunction):
         )
         await _resolve_awaitable(self.set_func(*merged, **kwargs))
         setattr(sqla_target, self.sqla_handle.column_name, new_state)
-        dispatch.after_state_change(source=old_state, target=new_state)
         dispatch.after_transition(
             transition_name=name,
             source=old_state,

@@ -2,7 +2,11 @@ from importlib.metadata import PackageNotFoundError, version
 
 from . import events, exc, introspection
 from .column import FSMColumn
-from .introspection import aavailable_transitions, available_transitions
+from .introspection import (
+    aavailable_transitions,
+    available_transitions,
+    get_transition,
+)
 from .sqltypes import FSMField
 from .transition import FSMCondition, async_transition, transition
 from .validation import (
