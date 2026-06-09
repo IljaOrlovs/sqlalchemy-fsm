@@ -3,7 +3,7 @@ from importlib.metadata import PackageNotFoundError, version
 from . import events, exc
 from .column import FSMColumn
 from .sqltypes import FSMField
-from .transition import async_transition, transition
+from .transition import FSMCondition, async_transition, transition
 from .validation import (
     _register_mapper_listener as _register_fsm_validator,
 )

@@ -53,6 +53,14 @@ def _initial_state(column: Column) -> str | None:
 
     Returns `None` if we can't pin down the default; the validator then
     surfaces a clear error instead of silently using the wrong start state.
+
+    .. caution::
+        Callable defaults are invoked here (once, at `mapper_configured`
+        time) to discover the start state. Side-effectful defaults (e.g.
+        counters, ``datetime.now()``, logging) will therefore fire once
+        at startup *in addition to* every row insert. Keep callable
+        defaults pure if you rely on validation; otherwise switch to a
+        scalar default.
     """
     default = column.default
     if default is None:

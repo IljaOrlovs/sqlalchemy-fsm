@@ -2,6 +2,7 @@ import pytest
 import sqlalchemy
 
 from sqlalchemy_fsm import FSMField, transition
+from sqlalchemy_fsm.exc import InvalidSourceStateError
 
 from .conftest import Base
 
@@ -207,5 +208,5 @@ def test_can_proceed_mirrors_set_for_class_transitions():
     #   conds_only: perms ✗, conds ✓
     # so `set()` must raise, and `can_proceed()` must agree.
     assert m.publish.can_proceed() is False
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidSourceStateError):
         m.publish.set()

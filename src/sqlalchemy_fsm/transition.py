@@ -4,7 +4,7 @@ import asyncio
 import inspect as py_inspect
 import warnings
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, Protocol, overload, runtime_checkable
 
 if TYPE_CHECKING:
     from .column import FSMColumn
@@ -26,6 +26,20 @@ from . import bound, cache, exc
 from .meta import FSMMeta
 
 SourceState = str | None | Iterable[str | None]
+
+
+@runtime_checkable
+class FSMCondition(Protocol):
+    """Public-API shape for `conditions=` / `permissions=` callables.
+
+    Each callable is invoked as `fn(instance, *args, **kwargs)` and must
+    return something truthy to allow the transition. The Protocol is
+    permissive on extra args so existing callsites pass without changes,
+    but it gives pyright something to anchor on when a non-callable is
+    passed by mistake.
+    """
+
+    def __call__(self, instance: Any, /, *args: Any, **kwargs: Any) -> Any: ...
 
 
 @cache.dict_cache
@@ -288,8 +302,8 @@ def _make_transition(
 def transition(
     source: SourceState = "*",
     target: str | None = None,
-    conditions: Iterable[Callable[..., Any]] = (),
-    permissions: Iterable[Callable[..., Any]] = (),
+    conditions: Iterable[FSMCondition] = (),
+    permissions: Iterable[FSMCondition] = (),
 ) -> Callable[[Any], SyncFsmTransition]:
     return _make_transition(False, source, target, conditions, permissions)  # type: ignore[return-value]
 
@@ -297,8 +311,8 @@ def transition(
 def async_transition(
     source: SourceState = "*",
     target: str | None = None,
-    conditions: Iterable[Callable[..., Any]] = (),
-    permissions: Iterable[Callable[..., Any]] = (),
+    conditions: Iterable[FSMCondition] = (),
+    permissions: Iterable[FSMCondition] = (),
 ) -> Callable[[Any], AsyncFsmTransition]:
     """Like `@transition`, but the handler — and any conditions/permissions —
     may be `async def`. Invoke via `await instance.<name>.aset(...)`; only

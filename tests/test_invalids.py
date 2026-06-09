@@ -146,10 +146,7 @@ class TestMisconfiguredTransitions:
         return MisconfiguredTransitions()
 
     def test_misconfigured_transitions(self, model):
-        with (
-            pytest.raises(exc.SetupError) as err,
-            pytest.warns(UserWarning, match="Failure to validate handler call args"),
-        ):
+        with pytest.raises(exc.SetupError) as err:
             model.change_state.set(42)
         assert "Mismatch between args accepted" in str(err)
 

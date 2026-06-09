@@ -138,7 +138,7 @@ def _edges_from_class_group(
         arithmetic = _bound.TransitionStateArithmetics(parent_meta, sub_meta)
         sources = arithmetic.source_intersection()
         target = arithmetic.target_intersection()
-        if not sources or not target or isinstance(sources, bool):
+        if not sources or not target:
             continue
         out.extend(TransitionEdge(s, target, label) for s in sources)
     return out

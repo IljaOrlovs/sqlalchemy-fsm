@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
     from .transition import (
         AsyncFsmTransition,
+        FSMCondition,
         FsmTransition,
         SourceState,
         SyncFsmTransition,
@@ -100,8 +101,8 @@ class FSMColumn(sa.Column):
         self,
         source: SourceState = "*",
         target: str | None = None,
-        conditions: Iterable[Callable[..., Any]] = (),
-        permissions: Iterable[Callable[..., Any]] = (),
+        conditions: Iterable[FSMCondition] = (),
+        permissions: Iterable[FSMCondition] = (),
     ) -> Callable[[Any], SyncFsmTransition]:
         """Like the module-level `@transition`, but scoped to this column.
 
@@ -116,8 +117,8 @@ class FSMColumn(sa.Column):
         self,
         source: SourceState = "*",
         target: str | None = None,
-        conditions: Iterable[Callable[..., Any]] = (),
-        permissions: Iterable[Callable[..., Any]] = (),
+        conditions: Iterable[FSMCondition] = (),
+        permissions: Iterable[FSMCondition] = (),
     ) -> Callable[[Any], AsyncFsmTransition]:
         """Async sibling of `.transition`. See `sqlalchemy_fsm.async_transition`."""
         return self._make_decorator(True, source, target, conditions, permissions)  # type: ignore[return-value]

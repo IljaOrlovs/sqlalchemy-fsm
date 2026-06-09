@@ -3,6 +3,7 @@
 import inspect as py_inspect
 import warnings
 import weakref
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -91,8 +92,27 @@ class SqlAlchemyHandle:
 # that can't be weakref'd fall back to a small bounded LRU.
 _SigCache = "weakref.WeakKeyDictionary[Callable[..., Any], py_inspect.Signature | None]"
 _SIGNATURE_CACHE: _SigCache = weakref.WeakKeyDictionary()  # type: ignore[assignment]
-_SIGNATURE_FALLBACK: dict[int, py_inspect.Signature | None] = {}
+# Bounded LRU keyed by `id(fn)` for callables that can't be weakref'd
+# (e.g. built-ins). Wholesale clear() would lose entries belonging to other
+# callsites; LRU eviction keeps the hot set warm.
+_SIGNATURE_FALLBACK: OrderedDict[int, py_inspect.Signature | None] = OrderedDict()
 _SIGNATURE_FALLBACK_MAX = 256
+
+
+def _fallback_get(key: int) -> Any:
+    try:
+        sig = _SIGNATURE_FALLBACK[key]
+    except KeyError:
+        return _MISSING
+    _SIGNATURE_FALLBACK.move_to_end(key)
+    return sig
+
+
+def _fallback_put(key: int, sig: py_inspect.Signature | None) -> None:
+    _SIGNATURE_FALLBACK[key] = sig
+    _SIGNATURE_FALLBACK.move_to_end(key)
+    while len(_SIGNATURE_FALLBACK) > _SIGNATURE_FALLBACK_MAX:
+        _SIGNATURE_FALLBACK.popitem(last=False)
 
 
 def _signature_for(fn: Callable[..., Any]) -> py_inspect.Signature | None:
@@ -107,13 +127,11 @@ def _signature_for(fn: Callable[..., Any]) -> py_inspect.Signature | None:
         # Object isn't weakref-able (e.g. some built-ins) — fall through to
         # the id-keyed fallback cache below.
         key = id(fn)
-        cached = _SIGNATURE_FALLBACK.get(key, _MISSING)
+        cached = _fallback_get(key)
         if cached is not _MISSING:
             return cached
         sig = _compute_signature(fn)
-        if len(_SIGNATURE_FALLBACK) >= _SIGNATURE_FALLBACK_MAX:
-            _SIGNATURE_FALLBACK.clear()
-        _SIGNATURE_FALLBACK[key] = sig
+        _fallback_put(key, sig)
         return sig
 
     sig = _compute_signature(fn)
@@ -122,7 +140,7 @@ def _signature_for(fn: Callable[..., Any]) -> py_inspect.Signature | None:
     except TypeError:
         # Race: fn is weakref-able on getitem path but not setitem. Cache
         # in the fallback instead.
-        _SIGNATURE_FALLBACK[id(fn)] = sig
+        _fallback_put(id(fn), sig)
     return sig
 
 
@@ -262,13 +280,9 @@ class BoundFSMFunction(BoundFSMBase):
         err = _call_iface_error(self.set_func, merged_args, merged_kwargs)
         if err is None:
             return
-        warnings.warn(
-            f"Failure to validate handler call args: {err}",
-            stacklevel=2,
-        )
         raise exc.SetupError(
             "Mismatch between args accepted by preconditions "
-            f"({self.meta.conditions!r}) & handler ({self.set_func!r})"
+            f"({self.meta.conditions!r}) & handler ({self.set_func!r}): {err}"
         )
 
     def conditions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
@@ -394,9 +408,10 @@ class TransitionStateArithmetics:
     meta_a: "meta.FSMMeta"
     meta_b: "meta.FSMMeta"
 
-    def source_intersection(self) -> frozenset[str | None] | bool:
+    def source_intersection(self) -> frozenset[str | None] | None:
         """Sources reachable by both; `"*"` on either side widens to the
-        other. Returns `False` if there is no overlap.
+        other. Returns `None` if there is no overlap (i.e. the sub-handler
+        declares a source the parent does not cover).
 
         Note the asymmetry: when neither side is wildcard we *require*
         `meta_a.sources` (parent / class-transition) to be a superset of
@@ -414,7 +429,7 @@ class TransitionStateArithmetics:
             return sources_a
         if sources_a.issuperset(sources_b):
             return sources_a.intersection(sources_b)
-        return False
+        return None
 
     def target_intersection(self) -> str | None:
         """The agreed target, or `None` if the two targets conflict.
@@ -479,7 +494,7 @@ def inherited_bound_classes(key: tuple[type, "meta.FSMMeta"]) -> type:
             arithmetics = TransitionStateArithmetics(parent_meta, sub_meta)
 
             sub_sources = arithmetics.source_intersection()
-            if not sub_sources:
+            if sub_sources is None or not sub_sources:
                 raise exc.SetupError(
                     f"Source state superset {parent_meta.sources} "
                     f"and subset {sub_meta.sources} are not compatible"
@@ -528,6 +543,20 @@ def inherited_bound_classes(key: tuple[type, "meta.FSMMeta"]) -> type:
 
 
 class BoundFSMClass(BoundFSMBase):
+    """Runtime binding for a class-grouped `@transition`.
+
+    A class-based transition wraps a small dispatcher class whose methods
+    are themselves `@transition`-decorated sub-handlers. We synthesize one
+    instance of that dispatcher class per binding and pass it as the
+    sub-handler's first argument.
+
+    Note for users defining class-based transitions: `self` inside a
+    sub-handler is **the dispatcher instance, not the mapped row**. The
+    row is reachable via `self._sa_fsm_sqlalchemy_handle.record`. The
+    dispatcher class is instantiated with no arguments, so its `__init__`
+    must accept zero positional args (or be omitted).
+    """
+
     __slots__ = (*BoundFSMBase.__slots__, "bound_sub_metas", "_target_cached")
 
     def __init__(
