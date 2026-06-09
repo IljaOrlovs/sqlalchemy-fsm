@@ -67,6 +67,22 @@ def sql_equality_for(column: Any, target: str | None) -> Any:
         return expr
 
 
+def _failure_context(
+    bound_meta: Any, func: Callable[..., Any]
+) -> dict[str, Any]:
+    """Common kwargs splatted into every runtime FSM-failure exception.
+
+    Centralises the four pieces of context (current/target state plus
+    the handler name) so the six raise sites in `set` / `aset` don't
+    drift out of sync as new fields are added.
+    """
+    return {
+        "current_state": bound_meta.current_state,
+        "target_state": bound_meta.target_state,
+        "transition_name": func.__name__,
+    }
+
+
 class ClassBoundFsmTransition:
     __slots__ = (
         "_sa_fsm_meta",
@@ -156,27 +172,20 @@ class InstanceBoundFsmTransition(_InstanceBoundBase):
         bound_meta = self._sa_fsm_bound_meta
         func = self._sa_fsm_transition_fn
 
+        ctx = _failure_context(bound_meta, func)
         if not bound_meta.transition_possible():
             raise exc.InvalidSourceStateError(
                 f"Unable to switch from {bound_meta.current_state} "
                 f"using method {func.__name__}",
-                current_state=bound_meta.current_state,
-                target_state=bound_meta.target_state,
-                transition_name=func.__name__,
+                **ctx,
             )
         if not bound_meta.permissions_met(args, kwargs):
             raise exc.PermissionDeniedError(
-                f"Permission denied for transition {func.__name__}.",
-                current_state=bound_meta.current_state,
-                target_state=bound_meta.target_state,
-                transition_name=func.__name__,
+                f"Permission denied for transition {func.__name__}.", **ctx
             )
         if not bound_meta.conditions_met(args, kwargs):
             raise exc.PreconditionError(
-                "Preconditions are not satisfied.",
-                current_state=bound_meta.current_state,
-                target_state=bound_meta.target_state,
-                transition_name=func.__name__,
+                "Preconditions are not satisfied.", **ctx
             )
         return bound_meta.to_next_state(args, kwargs)
 
@@ -223,27 +232,20 @@ class AsyncInstanceBoundFsmTransition(_InstanceBoundBase):
         bound_meta = self._sa_fsm_bound_meta
         func = self._sa_fsm_transition_fn
 
+        ctx = _failure_context(bound_meta, func)
         if not bound_meta.transition_possible():
             raise exc.InvalidSourceStateError(
                 f"Unable to switch from {bound_meta.current_state} "
                 f"using method {func.__name__}",
-                current_state=bound_meta.current_state,
-                target_state=bound_meta.target_state,
-                transition_name=func.__name__,
+                **ctx,
             )
         if not await bound_meta.apermissions_met(args, kwargs):
             raise exc.PermissionDeniedError(
-                f"Permission denied for transition {func.__name__}.",
-                current_state=bound_meta.current_state,
-                target_state=bound_meta.target_state,
-                transition_name=func.__name__,
+                f"Permission denied for transition {func.__name__}.", **ctx
             )
         if not await bound_meta.aconditions_met(args, kwargs):
             raise exc.PreconditionError(
-                "Preconditions are not satisfied.",
-                current_state=bound_meta.current_state,
-                target_state=bound_meta.target_state,
-                transition_name=func.__name__,
+                "Preconditions are not satisfied.", **ctx
             )
         return await bound_meta.ato_next_state(args, kwargs)
 

@@ -1,6 +1,9 @@
 """State-name predicates and subscript helpers."""
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, TypeVar
+
+_C = TypeVar("_C", bound=type)
 
 
 def is_valid_fsm_state(value: Any) -> bool:
@@ -46,3 +49,34 @@ def normalize_subscript_states(cls_name: str, item: object) -> tuple[str, ...]:
         raise TypeError(f"{cls_name}[...] requires at least one state")
 
     return tuple(sorted(set(states)))
+
+
+def get_or_build_subscript_subclass(
+    parent: _C,
+    label: str,
+    item: object,
+    cache: dict[tuple[str, ...], _C],
+    extra_attrs: Mapping[str, Any] | None = None,
+) -> _C:
+    """Memoised `Parent[...]` factory shared by `FSMField` and `FSMColumn`.
+
+    The two subscript paths previously inlined the same cache-lookup +
+    ``type(...)`` construction; this consolidates them so the cache key
+    shape and class-name format only live in one place. `extra_attrs`
+    lets each parent inject its own class-body extras (e.g. SA's
+    ``inherit_cache``).
+    """
+    key = normalize_subscript_states(label, item)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    attrs: dict[str, Any] = {"_allowed_states": frozenset(key)}
+    if extra_attrs:
+        attrs.update(extra_attrs)
+    new_cls = type(
+        f"{label}[{', '.join(repr(s) for s in key)}]",
+        (parent,),
+        attrs,
+    )
+    cache[key] = new_cls  # type: ignore[assignment]
+    return new_cls  # type: ignore[return-value]

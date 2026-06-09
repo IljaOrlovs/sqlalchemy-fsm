@@ -162,6 +162,39 @@ def _call_iface_error(
     return None
 
 
+def _check_call_iface(
+    fn: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: Mapping[str, Any],
+) -> bool:
+    """Return True if ``fn(*args, **kwargs)`` would bind; else warn and return False.
+
+    Shared between the sync and async callable-evaluation loops so the
+    "warn on arg-shape mismatch, treat as falsy" policy lives in one place.
+    """
+    err = _call_iface_error(fn, args, kwargs)
+    if err is None:
+        return True
+    warnings.warn(
+        f"Callable {fn!r} cannot be invoked with these args: {err}",
+        stacklevel=3,
+    )
+    return False
+
+
+async def _resolve_awaitable(value: Any) -> Any:
+    """Await ``value`` if it's awaitable; otherwise return it as-is.
+
+    Centralises the "await unless it's already a plain value" dance that
+    appears in the async eval loop and in ``ato_next_state``. ``isawaitable``
+    is intentional (not ``iscoroutine``): Tasks, Futures, and custom
+    awaitables all resolve here.
+    """
+    if py_inspect.isawaitable(value):
+        return await value
+    return value
+
+
 class BoundFSMBase:
     __slots__ = ("extra_call_args", "meta", "sqla_handle")
 
@@ -242,12 +275,7 @@ class BoundFSMFunction(BoundFSMBase):
         get if invoked with mismatched args, but with a helpful warning.
         """
         for fn in callables:
-            err = _call_iface_error(fn, args, kwargs)
-            if err is not None:
-                warnings.warn(
-                    f"Callable {fn!r} cannot be invoked with these args: {err}",
-                    stacklevel=2,
-                )
+            if not _check_call_iface(fn, args, kwargs):
                 return False
             if not fn(*args, **kwargs):
                 return False
@@ -315,21 +343,9 @@ class AsyncBoundFSMFunction(BoundFSMFunction):
         kwargs: Mapping[str, Any],
     ) -> bool:
         for fn in callables:
-            err = _call_iface_error(fn, args, kwargs)
-            if err is not None:
-                warnings.warn(
-                    f"Callable {fn!r} cannot be invoked with these args: {err}",
-                    stacklevel=2,
-                )
+            if not _check_call_iface(fn, args, kwargs):
                 return False
-            result = fn(*args, **kwargs)
-            # `isawaitable` (not `iscoroutine`) so we resolve Tasks, Futures,
-            # and custom awaitables — common when conditions reuse helpers
-            # from a hybrid sync/async codebase. The bare-coroutine check
-            # missed those: a `Task` is truthy and would pass-through.
-            if py_inspect.isawaitable(result):
-                result = await result
-            if not result:
+            if not await _resolve_awaitable(fn(*args, **kwargs)):
                 return False
         return True
 
@@ -361,9 +377,7 @@ class AsyncBoundFSMFunction(BoundFSMFunction):
             self._validate_handler_iface(merged, kwargs)
 
         self.sqla_handle.dispatch.before_state_change(source=old_state, target=new_state)
-        result = self.set_func(*merged, **kwargs)
-        if py_inspect.isawaitable(result):
-            await result
+        await _resolve_awaitable(self.set_func(*merged, **kwargs))
         setattr(sqla_target, self.sqla_handle.column_name, new_state)
         self.sqla_handle.dispatch.after_state_change(source=old_state, target=new_state)
 

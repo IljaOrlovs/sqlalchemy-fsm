@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from sqlalchemy import types
 
-from .util import normalize_subscript_states
+from .util import get_or_build_subscript_subclass
 
 
 class FSMField(types.String):
@@ -53,15 +53,6 @@ class FSMField(types.String):
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
 
     def __class_getitem__(cls, item: object) -> type[FSMField]:
-        key = normalize_subscript_states("FSMField", item)
-        cached = cls._subscript_cache.get(key)
-        if cached is not None:
-            return cached
-
-        new_cls = type(
-            f"FSMField[{', '.join(repr(s) for s in key)}]",
-            (cls,),
-            {"_allowed_states": frozenset(key)},
+        return get_or_build_subscript_subclass(
+            cls, "FSMField", item, cls._subscript_cache
         )
-        cls._subscript_cache[key] = new_cls
-        return new_cls

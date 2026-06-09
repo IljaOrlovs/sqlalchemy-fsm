@@ -23,7 +23,7 @@ import sqlalchemy as sa
 
 from . import exc
 from .sqltypes import FSMField
-from .util import normalize_subscript_states
+from .util import get_or_build_subscript_subclass
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -69,18 +69,13 @@ class FSMColumn(sa.Column):
         def __set__(self, instance: object, value: str) -> None: ...
 
     def __class_getitem__(cls, item: object) -> type[FSMColumn]:
-        key = normalize_subscript_states("FSMColumn", item)
-        cached = cls._subscript_cache.get(key)
-        if cached is not None:
-            return cached
-
-        new_cls = type(
-            f"FSMColumn[{', '.join(repr(s) for s in key)}]",
-            (cls,),
-            {"_allowed_states": frozenset(key), "inherit_cache": True},
+        return get_or_build_subscript_subclass(
+            cls,
+            "FSMColumn",
+            item,
+            cls._subscript_cache,
+            extra_attrs={"inherit_cache": True},
         )
-        cls._subscript_cache[key] = new_cls
-        return new_cls
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         if "type_" not in kwargs and not _args_have_type(args):
