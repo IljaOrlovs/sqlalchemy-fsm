@@ -351,15 +351,83 @@ artifacts are Sigstore-signed and published to TestPyPI then PyPI via
 OIDC trusted publishing. A GitHub Release is created with notes from
 [CHANGELOG.md](CHANGELOG.md).
 
-## How does this differ from django-fsm?
+## Comparison with django-fsm
 
-- The transition handler does not own the database transaction — the
-  caller commits the session after `set()` returns. No implicit
-  `transaction.atomic` wrapping.
-- Conditions and permissions receive the same `*args` / `**kwargs` you
-  pass to `set()` / `can_proceed()` (after the instance), so you can
-  thread caller-supplied context like `user=` through every check.
-- States can be declared up-front as a closed set
-  (`FSMField["a","b","c"]`) and the transition graph is validated at
-  SA mapper-configuration time. Alembic autogenerate can emit and
-  diff a matching CHECK constraint.
+Same shape — state column plus `@transition` methods — applied to
+SQLAlchemy instead of Django. ([django-fsm] is archived since 2024;
+[django-fsm-2] is the maintained drop-in fork.)
+
+[django-fsm]: https://github.com/viewflow/django-fsm
+[django-fsm-2]: https://github.com/django-commons/django-fsm-2
+
+| | sqlalchemy-fsm | django-fsm |
+|---|---|---|
+| ORM | SQLAlchemy 1.4 / 2.x | Django |
+| State types | String | String, int, FK |
+| Declared state set | `FSMField["a","b","c"]` | Free-form |
+| Startup graph validation | Correctness, completeness, reachability — `SetupError` at import | None — typo'd `target=` silently assigns |
+| DB constraint | `CHECK (col IN (...))` via Alembic extra, autogen diff | None |
+| `@transition` kwargs | `source`, `target`, `conditions`, `permissions` | + `on_error`, `permission` (singular), `custom` |
+| Condition signature | `(instance, *args, **kwargs)` forwarded from `set()` | `(instance)` |
+| Permissions | List of callables; receive `set()` kwargs | One: Django perm string or `(instance, user) -> bool` |
+| Optimistic locking | Use SA `version_id_col` | `ConcurrentTransitionMixin` filters UPDATE by loaded state |
+| Async | `@async_transition`, `aset` / `acan_proceed`, mixed sync/async checks | None |
+| Events | SA `before_state_change` / `after_state_change` | Django signals `pre_transition` / `post_transition` |
+| Dynamic target | Class-grouped transitions (dispatch by source) | `RETURN_VALUE(...)` / `GET_STATE(...)` |
+| Proxy class per state | None | `state_choices=` swaps `__class__` |
+| Block direct writes | No (`obj.state = "x"` always works) | `protected=True` |
+| Graph export | Pure Python: `to_mermaid` / `to_dot` / `to_plantuml` | `manage.py graph_transitions` (graphviz extra) |
+| Admin | n/a | `FSMAdminMixin`, unfold contrib (django-fsm-2) |
+| Introspection helpers | `iter_transitions`, `collect_edges` | `get_available_*_transitions(user)` on instance |
+
+Neither library wraps the handler in a transaction — the caller
+commits.
+
+### Notes on the bigger differences
+
+- **`FSMField["a","b","c"]`** declares the legal set. At
+  `mapper_configured` time, every `source=` / `target=` must be in
+  it, every declared state must be used, every state must be
+  reachable from `default=`. `target="publsihed"` fails at import.
+  Plain `FSMField` skips validation.
+- **Alembic extra** emits and diffs `ck_<table>_<col>_fsm`. django-fsm
+  state lives only in Python; a stray `UPDATE` from psql can write
+  anything.
+- **Kwargs threaded through checks.** `post.publish.set(user=u)`
+  reaches every permission and condition. django-fsm conditions get
+  only the instance; threading context means closures.
+- **No `permission=` string.** No auth framework to defer to — pass
+  callables and decide what to check.
+- **No `on_error=`.** Model failures as an explicit transition you
+  call, not a magic side-effect of a raise.
+- **Async transitions work under `AsyncSession`.** Sync `.set()` too
+  — it just mutates an attribute, so it composes with `await
+  session.commit()`.
+
+### What this doesn't have
+
+- `RETURN_VALUE` / `GET_STATE` — use class-grouped transitions, or
+  set the attribute in the handler.
+- `state_choices=` proxy classes.
+- Integer or FK state columns. An enum with `__str__` works; ints
+  need a custom SA type.
+- `protected=True`. Bare attribute writes aren't gated; the CHECK
+  constraint catches the bad value at commit.
+- Admin integration.
+- Per-instance `get_available_<field>_transitions(user)`. Use
+  `iter_transitions(cls)` / `collect_edges(cls)` and filter
+  yourself.
+
+### Migrating from django-fsm
+
+| django-fsm | sqlalchemy-fsm |
+|---|---|
+| `FSMField(default="draft", protected=True)` | `sa.Column(FSMField["draft", …], default="draft", nullable=False)` |
+| `@transition(field=state, source="x", target="y")` | `@transition(source="x", target="y")` (`column=` only if >1 FSMField) |
+| `permission="app.publish"` | `permissions=[lambda inst, user=None, **_: user and user.has_perm("app.publish")]` |
+| `condition(instance)` | `condition(instance, *args, **kwargs)` |
+| `instance.do_x(); instance.save()` | `instance.do_x.set(); session.commit()` |
+| `pre_transition` / `post_transition` | `event.listen(Model, "before_state_change" \| "after_state_change", fn)` |
+| `ConcurrentTransitionMixin` | `version_id_col` on the mapper, or `SELECT … FOR UPDATE` |
+| `RETURN_VALUE("a", "b")` | Class-grouped transition with sub-handlers |
+| `manage.py graph_transitions` | `print(to_mermaid(Model))` |
