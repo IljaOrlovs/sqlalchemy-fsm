@@ -2,7 +2,7 @@ import pytest
 import sqlalchemy
 
 from sqlalchemy_fsm import FSMField, transition
-from sqlalchemy_fsm.exc import InvalidSourceStateError
+from sqlalchemy_fsm.exc import PreconditionError
 
 from .conftest import Base
 
@@ -208,5 +208,8 @@ def test_can_proceed_mirrors_set_for_class_transitions():
     #   conds_only: perms ✗, conds ✓
     # so `set()` must raise, and `can_proceed()` must agree.
     assert m.publish.can_proceed() is False
-    with pytest.raises(InvalidSourceStateError):
+    # Source state matches both subs; neither sub satisfies perms+conds
+    # together → PreconditionError with a per-sub breakdown (was
+    # InvalidSourceStateError before the error-attribution fix).
+    with pytest.raises(PreconditionError, match=r"permissions=.*conditions="):
         m.publish.set()

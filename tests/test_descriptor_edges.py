@@ -93,6 +93,52 @@ def test_set_after_expunge_mutates_in_memory():
         session.close()
 
 
+class Falsy(Base):
+    __tablename__ = "descriptor_edges_falsy"
+    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+    state = sqlalchemy.Column(FSMField)
+
+    def __init__(self, *args, **kwargs):
+        self.state = "draft"
+        super().__init__(*args, **kwargs)
+
+    def __bool__(self) -> bool:
+        # Simulate a value-object-style mapped class whose truthiness
+        # depends on domain state, not session attachment. Pre-fix,
+        # `SqlAlchemyHandle.__post_init__` skipped dispatcher creation
+        # whenever __bool__ was False, breaking `set()` downstream.
+        return False
+
+    @transition(source="draft", target="published")
+    def publish(self):
+        pass
+
+
+def test_set_works_on_mapped_instance_overriding_bool():
+    """Regression: mapped class with `__bool__ → False` must still transition."""
+    f = Falsy()
+    assert not bool(f)
+    f.publish.set()
+    assert f.state == "published"
+
+
+def test_exception_carries_structured_fields():
+    """`InvalidSourceStateError` exposes `current_state`, `target_state`,
+    and `transition_name` so callers don't have to parse the message."""
+    from sqlalchemy_fsm.exc import InvalidSourceStateError
+
+    a = Article()  # state="draft"
+    a.publish.set()  # now "published"
+
+    # No transition from "published" back to "draft" — `publish` requires draft.
+    with pytest.raises(InvalidSourceStateError) as info:
+        a.publish.set()
+    err = info.value
+    assert err.current_state == "published"
+    assert err.target_state == "published"
+    assert err.transition_name == "publish"
+
+
 def test_set_works_across_sessions():
     """A row moved between sessions can still transition.
 

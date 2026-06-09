@@ -24,7 +24,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   return a `partial` for any SA `InstanceEvents` attribute; that
   surface is now closed.
 
+### Added (cont.)
+- `InvalidSourceStateError`, `PreconditionError`, and `PermissionDeniedError`
+  now expose `.current_state`, `.target_state`, and `.transition_name`
+  attributes, so callers can branch on the failure without parsing the
+  error message.
+- Async transitions: `await instance.<name>()` now returns the boolean
+  predicate (was previously sync — `await` raised `TypeError`).
+  `instance.<name>.aset(...)` and `instance.<name>.acan_proceed(...)`
+  are unchanged.
+- `FSMField["a","bb","ccc"]` now derives `length=` from the longest
+  declared state (overridable via explicit `length=` kwarg). The plain
+  unsubscripted `FSMField` remains unbounded.
+
 ### Fixed
+- `SqlAlchemyHandle.__post_init__` no longer skips dispatcher creation
+  when the mapped instance overrides `__bool__` to return falsy
+  (`if self.record is not None:` instead of truthiness).
+- Async condition / permission / handler evaluation awaits any
+  `inspect.isawaitable` value (Task, Future, custom awaitables), not
+  only bare coroutines. Previously a sync callable returning a `Task`
+  was treated as truthy via object identity and silently passed.
+- Class-grouped transitions now distinguish "no sub-handler's source
+  set matches the current state" (`InvalidSourceStateError`) from
+  "source state matches, but no single sub satisfies both permissions
+  and conditions" (`PreconditionError` with a per-sub breakdown).
+- `_make_transition` accepts any callable, not only `inspect.isfunction`
+  — `functools.partial`, callable class instances, and other callables
+  used to fall into the "Do not know how to" path.
+- `is_valid_source_state` now gates the `"*"` comparison on
+  `isinstance(value, str)` so a malicious `__eq__` can't sneak a
+  non-string wildcard through validation.
+
+### Fixed (continued)
 - Alembic CHECK constraint now goes through SA's expression compiler
   rather than f-string interpolation. State strings containing
   single quotes (`O'Brien`) are escaped correctly, and column names

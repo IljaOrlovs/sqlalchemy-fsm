@@ -332,3 +332,62 @@ class TestAsyncClassTransitionMixingForbidden:
         with pytest.raises(SetupError):
             # Touching the descriptor triggers the merge.
             _ = _Bad().go.acan_proceed
+
+
+# --- regression tests for the new awaitable __call__ and isawaitable fix ---
+
+
+class AwaitableDoc(AsyncBase):
+    __tablename__ = "AwaitableDoc"
+    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+    state = sqlalchemy.Column(FSMField)
+
+    def __init__(self, *a, **kw):
+        self.state = "draft"
+        super().__init__(*a, **kw)
+
+    @async_transition(source="draft", target="published")
+    async def publish(self):
+        pass
+
+
+async def test_async_predicate_is_awaitable():
+    """`await instance.publish()` returns the boolean predicate result so
+    async callsites stay symmetric with the sync version."""
+    doc = AwaitableDoc()
+    assert await doc.publish() is False  # current state is "draft", not "published"
+    await doc.publish.aset()
+    assert await doc.publish() is True
+
+
+async def test_async_condition_returning_task_is_awaited():
+    """Regression: a sync condition that returns a `Task` (or any non-coroutine
+    awaitable) used to be treated as truthy via object truth, silently passing
+    the check. After the fix it is awaited like a coroutine."""
+    import asyncio
+
+    async def _async_helper():
+        return False  # condition should resolve to False, blocking the transition
+
+    def returns_task(instance):
+        return asyncio.ensure_future(_async_helper())
+
+    class _Doc(AsyncBase):
+        __tablename__ = "AwaitableCondDoc"
+        id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+        state = sqlalchemy.Column(FSMField)
+
+        def __init__(self, *a, **kw):
+            self.state = "draft"
+            super().__init__(*a, **kw)
+
+        @async_transition(
+            source="draft", target="published", conditions=[returns_task]
+        )
+        async def publish(self):
+            pass
+
+    doc = _Doc()
+    with pytest.raises(PreconditionError):
+        await doc.publish.aset()
+    assert doc.state == "draft"

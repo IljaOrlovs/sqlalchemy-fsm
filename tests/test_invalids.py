@@ -47,16 +47,24 @@ def test_too_much_fsm():
     assert "FSMColumn.transition" in str(err)
 
 
-def test_transition_raises_on_unknown():
+def test_transition_accepts_callable_instance():
+    """A callable class instance is a valid handler (treated like a function)."""
+
     class MyCallable:
-        def __call__(*args):
-            pass
+        def __call__(self, instance):
+            instance.side_effect = "called"
 
     wrapper = transition(source="*", target="blah")
-    with pytest.raises(NotImplementedError) as err:
-        wrapper(MyCallable())
+    # Should NOT raise — callable instances are valid handlers.
+    fsm_t = wrapper(MyCallable())
+    assert fsm_t.meta.target == "blah"
 
-    assert "Do not know how to" in str(err)
+
+def test_transition_rejects_non_callable():
+    """Non-callables (ints, strings, etc.) are a setup error."""
+    wrapper = transition(source="*", target="blah")
+    with pytest.raises(exc.SetupError, match="expects a callable"):
+        wrapper(42)  # pyright: ignore[reportArgumentType]
 
 
 def test_transition_raises_on_invalid_state():

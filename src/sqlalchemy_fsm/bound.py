@@ -66,7 +66,10 @@ class SqlAlchemyHandle:
 
     def __post_init__(self) -> None:
         self.column_name = self.fsm_column.name
-        if self.record:
+        # Use `is not None` instead of truthiness: mapped classes may override
+        # `__bool__` (collection-like rows, value objects) and `if self.record:`
+        # would then skip dispatcher creation, breaking `set()` downstream.
+        if self.record is not None:
             self.dispatch = events.BoundFSMDispatcher(self.record)
 
 
@@ -320,7 +323,11 @@ class AsyncBoundFSMFunction(BoundFSMFunction):
                 )
                 return False
             result = fn(*args, **kwargs)
-            if py_inspect.iscoroutine(result):
+            # `isawaitable` (not `iscoroutine`) so we resolve Tasks, Futures,
+            # and custom awaitables — common when conditions reuse helpers
+            # from a hybrid sync/async codebase. The bare-coroutine check
+            # missed those: a `Task` is truthy and would pass-through.
+            if py_inspect.isawaitable(result):
                 result = await result
             if not result:
                 return False
@@ -355,7 +362,7 @@ class AsyncBoundFSMFunction(BoundFSMFunction):
 
         self.sqla_handle.dispatch.before_state_change(source=old_state, target=new_state)
         result = self.set_func(*merged, **kwargs)
-        if py_inspect.iscoroutine(result):
+        if py_inspect.isawaitable(result):
             await result
         setattr(sqla_target, self.sqla_handle.column_name, new_state)
         self.sqla_handle.dispatch.after_state_change(source=old_state, target=new_state)
@@ -608,10 +615,51 @@ class BoundFSMClass(BoundFSMBase):
                 f"Can transition with multiple handlers ({accepted})"
             )
         if not accepted:
-            raise exc.InvalidSourceStateError(
-                "No sub-transition is currently applicable."
-            )
+            self._raise_no_accepted_sub(args, kwargs)
         return accepted[0].to_next_state(args, kwargs)
+
+    def _raise_no_accepted_sub(
+        self, args: Iterable[Any], kwargs: Mapping[str, Any]
+    ) -> None:
+        """Distinguish "current state hits no sub" from "some sub matches the
+        source state, but no single sub passes both permissions and conditions".
+
+        The latter is a real foot-gun for class-grouped transitions: a user
+        sees ``InvalidSourceStateError`` and assumes their state is wrong,
+        when really one sub fails perms and another fails conds.
+        """
+        applicable = self._applicable_subs()
+        if not applicable:
+            raise exc.InvalidSourceStateError(
+                f"current state {self.current_state!r} does not match any "
+                f"sub-handler's source set",
+                current_state=self.current_state,
+                target_state=self.target_state,
+            )
+        # Source state matches at least one sub; show which checks failed
+        # so the user can see the disjoint pass-sets.
+        details = self._sub_check_summary(applicable, args, kwargs)
+        raise exc.PreconditionError(
+            "no sub-handler satisfies both permissions and conditions "
+            f"for current state {self.current_state!r}: {details}",
+            current_state=self.current_state,
+            target_state=self.target_state,
+        )
+
+    def _sub_check_summary(
+        self,
+        applicable: list["BoundFSMBase"],
+        args: Iterable[Any],
+        kwargs: Mapping[str, Any],
+    ) -> str:
+        parts = []
+        for sub in applicable:
+            perm = sub.permissions_met(args, kwargs)
+            cond = sub.conditions_met(args, kwargs)
+            parts.append(
+                f"{sub.__class__.__name__}(permissions={perm}, conditions={cond})"
+            )
+        return "; ".join(parts)
 
 
 class AsyncBoundFSMClass(BoundFSMClass):
@@ -676,7 +724,31 @@ class AsyncBoundFSMClass(BoundFSMClass):
                 f"Can transition with multiple handlers ({accepted})"
             )
         if not accepted:
-            raise exc.InvalidSourceStateError(
-                "No sub-transition is currently applicable."
-            )
+            await self._araise_no_accepted_sub(args, kwargs)
         return await accepted[0].ato_next_state(args, kwargs)
+
+    async def _araise_no_accepted_sub(
+        self, args: Iterable[Any], kwargs: Mapping[str, Any]
+    ) -> None:
+        """Async sibling of `_raise_no_accepted_sub` — same disambiguation."""
+        applicable = self._applicable_async_subs()
+        if not applicable:
+            raise exc.InvalidSourceStateError(
+                f"current state {self.current_state!r} does not match any "
+                f"sub-handler's source set",
+                current_state=self.current_state,
+                target_state=self.target_state,
+            )
+        parts = []
+        for sub in applicable:
+            perm = await sub.apermissions_met(args, kwargs)
+            cond = await sub.aconditions_met(args, kwargs)
+            parts.append(
+                f"{sub.__class__.__name__}(permissions={perm}, conditions={cond})"
+            )
+        raise exc.PreconditionError(
+            "no sub-handler satisfies both permissions and conditions "
+            f"for current state {self.current_state!r}: {'; '.join(parts)}",
+            current_state=self.current_state,
+            target_state=self.target_state,
+        )

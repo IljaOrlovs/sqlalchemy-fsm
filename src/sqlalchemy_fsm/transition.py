@@ -159,14 +159,25 @@ class InstanceBoundFsmTransition(_InstanceBoundBase):
         if not bound_meta.transition_possible():
             raise exc.InvalidSourceStateError(
                 f"Unable to switch from {bound_meta.current_state} "
-                f"using method {func.__name__}"
+                f"using method {func.__name__}",
+                current_state=bound_meta.current_state,
+                target_state=bound_meta.target_state,
+                transition_name=func.__name__,
             )
         if not bound_meta.permissions_met(args, kwargs):
             raise exc.PermissionDeniedError(
-                f"Permission denied for transition {func.__name__}."
+                f"Permission denied for transition {func.__name__}.",
+                current_state=bound_meta.current_state,
+                target_state=bound_meta.target_state,
+                transition_name=func.__name__,
             )
         if not bound_meta.conditions_met(args, kwargs):
-            raise exc.PreconditionError("Preconditions are not satisfied.")
+            raise exc.PreconditionError(
+                "Preconditions are not satisfied.",
+                current_state=bound_meta.current_state,
+                target_state=bound_meta.target_state,
+                transition_name=func.__name__,
+            )
         return bound_meta.to_next_state(args, kwargs)
 
     def can_proceed(self, *args: Any, **kwargs: Any) -> bool:
@@ -177,10 +188,22 @@ class InstanceBoundFsmTransition(_InstanceBoundBase):
 
 
 class AsyncInstanceBoundFsmTransition(_InstanceBoundBase):
-    """Async sibling of `InstanceBoundFsmTransition`. Exposes only `aset`
-    and `acan_proceed` — calling them outside a running event loop raises."""
+    """Async sibling of `InstanceBoundFsmTransition`. Exposes `aset` /
+    `acan_proceed`, and an awaitable `__call__`.
+
+    Calling `aset` / `acan_proceed` outside a running event loop raises.
+    `__call__` is awaitable so async-first callsites stay symmetric with
+    the sync version — even though the predicate itself is a sync attribute
+    comparison, returning a coroutine keeps `await instance.publish()`
+    valid alongside `await instance.publish.aset()`.
+    """
 
     __slots__ = ()
+
+    async def __call__(self) -> bool:  # type: ignore[override]
+        """True if this instance is currently in the transition's target state."""
+        bound_meta = self._sa_fsm_bound_meta
+        return bound_meta.target_state == bound_meta.current_state
 
     @staticmethod
     def _require_running_loop() -> None:
@@ -203,14 +226,25 @@ class AsyncInstanceBoundFsmTransition(_InstanceBoundBase):
         if not bound_meta.transition_possible():
             raise exc.InvalidSourceStateError(
                 f"Unable to switch from {bound_meta.current_state} "
-                f"using method {func.__name__}"
+                f"using method {func.__name__}",
+                current_state=bound_meta.current_state,
+                target_state=bound_meta.target_state,
+                transition_name=func.__name__,
             )
         if not await bound_meta.apermissions_met(args, kwargs):
             raise exc.PermissionDeniedError(
-                f"Permission denied for transition {func.__name__}."
+                f"Permission denied for transition {func.__name__}.",
+                current_state=bound_meta.current_state,
+                target_state=bound_meta.target_state,
+                transition_name=func.__name__,
             )
         if not await bound_meta.aconditions_met(args, kwargs):
-            raise exc.PreconditionError("Preconditions are not satisfied.")
+            raise exc.PreconditionError(
+                "Preconditions are not satisfied.",
+                current_state=bound_meta.current_state,
+                target_state=bound_meta.target_state,
+                transition_name=func.__name__,
+            )
         return await bound_meta.ato_next_state(args, kwargs)
 
     async def acan_proceed(self, *args: Any, **kwargs: Any) -> bool:
@@ -310,12 +344,18 @@ def _make_transition(
     )
 
     def inner(subject: Any) -> FsmTransition:
-        if py_inspect.isfunction(subject):
-            bound_cls = fn_cls
-        elif py_inspect.isclass(subject):
+        # Classes go through the sub-handler dispatcher path; anything
+        # else callable (function, lambda, functools.partial, callable
+        # instance) is treated as a single handler. Non-callables are
+        # a setup mistake — reject loudly.
+        if py_inspect.isclass(subject):
             bound_cls = cls_cls
+        elif callable(subject):
+            bound_cls = fn_cls
         else:
-            raise NotImplementedError(f"Do not know how to {subject!r}")
+            raise exc.SetupError(
+                f"@transition expects a callable or class; got {subject!r}"
+            )
         meta = FSMMeta(
             source, target, conditions, (), bound_cls, permissions, is_async=is_async
         )

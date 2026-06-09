@@ -27,8 +27,14 @@ class FSMField(types.String):
             default="draft",
         )
 
-    The plain `FSMField` form (no subscript) remains supported and skips
-    the startup check.
+    The subscripted form also derives a column `length=` equal to the
+    longest declared state name, so dialects that care about ``VARCHAR``
+    sizing (Postgres warns, MySQL forbids unsized varchar in some
+    configs) get a sensible bound. Override by passing ``length=`` to
+    the constructor explicitly: ``FSMField["a","b"](length=64)``.
+
+    The plain `FSMField` form (no subscript) remains supported, skips
+    the startup check, and uses SA's default (unbounded) ``String``.
     """
 
     _allowed_states: frozenset[str] | None = None
@@ -36,6 +42,15 @@ class FSMField(types.String):
     # Cache of (states-tuple → subclass) so `FSMField["a","b"]` returns the
     # same class on repeated lookups — important for `isinstance` checks.
     _subscript_cache: ClassVar[dict[tuple[str, ...], type[FSMField]]] = {}
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        if (
+            self._allowed_states is not None
+            and "length" not in kwargs
+            and not args
+        ):
+            kwargs["length"] = max(len(s) for s in self._allowed_states)
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
 
     def __class_getitem__(cls, item: object) -> type[FSMField]:
         key = normalize_subscript_states("FSMField", item)

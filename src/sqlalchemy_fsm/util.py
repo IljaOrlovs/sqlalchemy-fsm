@@ -9,8 +9,17 @@ def is_valid_fsm_state(value: Any) -> bool:
 
 
 def is_valid_source_state(value: Any) -> bool:
-    """A transition source: a state name, `"*"` (any), or `None` (NULL column)."""
-    return (value == "*") or (value is None) or is_valid_fsm_state(value)
+    """A transition source: a state name, `"*"` (any), or `None` (NULL column).
+
+    The `"*"` comparison is gated on `isinstance(value, str)` so a foreign
+    object whose `__eq__` happens to return truthy against `"*"` can't sneak
+    through validation.
+    """
+    if value is None:
+        return True
+    if isinstance(value, str) and value == "*":
+        return True
+    return is_valid_fsm_state(value)
 
 
 def normalize_subscript_states(cls_name: str, item: object) -> tuple[str, ...]:
