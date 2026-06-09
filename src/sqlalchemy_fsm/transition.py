@@ -6,6 +6,9 @@ import warnings
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, overload
 
+if TYPE_CHECKING:
+    from .column import FSMColumn
+
 try:
     # SQLAlchemy 2.0+
     from sqlalchemy.ext.hybrid import HybridExtensionType
@@ -17,6 +20,7 @@ except ImportError:  # pragma: no cover
         HYBRID_METHOD,  # pyright: ignore[reportAttributeAccessIssue]
     )
 from sqlalchemy.orm.interfaces import InspectionAttrInfo
+from sqlalchemy.sql.expression import false as sql_false
 
 from . import bound, cache, exc
 from .meta import FSMMeta
@@ -62,10 +66,12 @@ class ClassBoundFsmTransition:
     def is_(self, value: Any) -> Any:
         if isinstance(value, bool):
             return self().is_(value)
-        # Non-bool argument: warn and return a sentinel False that, used as a
-        # SA filter, matches nothing.
+        # Non-bool argument: warn and return a SA `false()` literal so that
+        # callers using this in `query.filter(...)` get a well-defined
+        # "matches nothing" instead of Python's bare `False`, which SA can
+        # mishandle depending on dialect/version.
         warnings.warn(f"Unexpected is_ argument: {value!r}", stacklevel=2)
-        return False
+        return sql_false()
 
 
 class _InstanceBoundBase:
@@ -125,12 +131,10 @@ class InstanceBoundFsmTransition(_InstanceBoundBase):
         return bound_meta.to_next_state(args, kwargs)
 
     def can_proceed(self, *args: Any, **kwargs: Any) -> bool:
-        bound_meta = self._sa_fsm_bound_meta
-        return (
-            bound_meta.transition_possible()
-            and bound_meta.permissions_met(args, kwargs)
-            and bound_meta.conditions_met(args, kwargs)
-        )
+        # Delegate to `would_succeed` so the result mirrors what `set()`
+        # would actually do — including the "exactly one accepted sub-handler"
+        # rule for class-based transitions.
+        return self._sa_fsm_bound_meta.would_succeed(args, kwargs)
 
 
 class AsyncInstanceBoundFsmTransition(_InstanceBoundBase):
@@ -172,12 +176,7 @@ class AsyncInstanceBoundFsmTransition(_InstanceBoundBase):
 
     async def acan_proceed(self, *args: Any, **kwargs: Any) -> bool:
         self._require_running_loop()
-        bound_meta = self._sa_fsm_bound_meta
-        return (
-            bound_meta.transition_possible()
-            and await bound_meta.apermissions_met(args, kwargs)
-            and await bound_meta.aconditions_met(args, kwargs)
-        )
+        return await self._sa_fsm_bound_meta.awould_succeed(args, kwargs)
 
 
 class FsmTransition(InspectionAttrInfo):
@@ -199,17 +198,17 @@ class FsmTransition(InspectionAttrInfo):
         self,
         meta: FSMMeta,
         set_function: Callable[..., Any],
-        column_ref: Any = None,
+        column_ref: "FSMColumn | None" = None,
     ) -> None:
         self.meta = meta
         self.set_fn = set_function
         # Set by `FSMColumn.transition`; `None` for the legacy module-level
         # `@transition`, which resolves to the model's single FSM column.
-        self.column_ref = column_ref
+        self.column_ref: FSMColumn | None = column_ref
 
-    def __get__(  # noqa: E501
+    def __get__(
         self, instance: Any, owner: type
-    ) -> "ClassBoundFsmTransition | InstanceBoundFsmTransition | AsyncInstanceBoundFsmTransition":
+    ) -> "ClassBoundFsmTransition | InstanceBoundFsmTransition | AsyncInstanceBoundFsmTransition":  # noqa: E501
         try:
             sql_alchemy_handle = owner._sa_fsm_sqlalchemy_handle
         except AttributeError:

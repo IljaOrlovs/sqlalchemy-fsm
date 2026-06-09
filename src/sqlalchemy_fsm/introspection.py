@@ -49,9 +49,11 @@ def iter_transitions(
 
     If `column` is given, only return transitions bound to that column
     (`column_ref is column`). Transitions with no `column_ref` (legacy
-    `@transition(...)`) are returned for every `column` — this only
-    matters in the single-column case, where the mismatch is the right
-    behavior.
+    `@transition(...)`) are returned for every `column` query — that's
+    correct for single-column models (the only place legacy `@transition`
+    is valid) and `validate_fsm` separately rejects mixing legacy
+    transitions with multi-column models, so the over-attribution can
+    never produce a confusing report.
     """
     out: list[tuple[str, FsmTransition]] = []
     for name in dir(model_cls):

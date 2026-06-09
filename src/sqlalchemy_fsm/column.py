@@ -23,6 +23,7 @@ import sqlalchemy as sa
 
 from . import exc
 from .sqltypes import FSMField
+from .util import normalize_subscript_states
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -67,22 +68,7 @@ class FSMColumn(sa.Column):
         def __set__(self, instance: object, value: str) -> None: ...
 
     def __class_getitem__(cls, item: object) -> type[FSMColumn]:
-        if isinstance(item, str):
-            states: tuple[str, ...] = (item,)
-        elif isinstance(item, tuple):
-            states = item  # type: ignore[assignment]
-        else:
-            raise TypeError(
-                f"FSMColumn[...] expects strings; got {type(item).__name__}"
-            )
-
-        bad = [s for s in states if not isinstance(s, str)]
-        if bad:
-            raise TypeError(f"FSMColumn[...] expects strings; got {bad!r}")
-        if not states:
-            raise TypeError("FSMColumn[...] requires at least one state")
-
-        key = tuple(sorted(set(states)))
+        key = normalize_subscript_states("FSMColumn", item)
         cached = cls._subscript_cache.get(key)
         if cached is not None:
             return cached

@@ -18,13 +18,14 @@ for reachability — they edge from every allowed state to their target.
 from __future__ import annotations
 
 import inspect as py_inspect
+import warnings
 from typing import TYPE_CHECKING
 
 import sqlalchemy.orm
 from sqlalchemy import event
 
 from . import bound, exc
-from .introspection import collect_edges, collect_transition_states
+from .introspection import collect_edges, collect_transition_states, iter_transitions
 from .sqltypes import FSMField
 
 if TYPE_CHECKING:
@@ -91,7 +92,17 @@ def _initial_state(column: Column) -> str | None:
         # `required` is always [] or [<ctx>] here.
         try:
             result = arg(None) if required else arg()
-        except Exception:
+        except Exception as err:
+            # The caller will surface a clear "couldn't determine default"
+            # error, but the user has no way to know *why* their callable
+            # default was rejected. A warning makes that explicit without
+            # promoting validation to a hard error on the side of the
+            # original error.
+            warnings.warn(
+                f"FSM validator couldn't evaluate callable default {arg!r}: "
+                f"{type(err).__name__}: {err}",
+                stacklevel=2,
+            )
             return None
         return result if isinstance(result, str) else None
     return None
@@ -130,8 +141,26 @@ def validate_fsm(model_cls: type) -> None:
     `SetupError` on any violation.
     """
     columns = _fsm_columns(model_cls)
+    multi = len(columns) > 1
+    if multi:
+        # Legacy `@transition(...)` has no `column_ref`, so dispatch falls
+        # back to `single_fsm_column` — which raises at runtime on a
+        # multi-column model. Surface that mistake at mapper-configure
+        # time instead of waiting for the first transition call.
+        legacy = [
+            name
+            for name, t in iter_transitions(model_cls)
+            if t.column_ref is None
+        ]
+        if legacy:
+            raise exc.SetupError(
+                f"{model_cls.__name__} has multiple FSMField columns but "
+                f"defines bare @transition method(s) {sorted(legacy)!r}; "
+                f"use `FSMColumn.transition(...)` to bind each transition "
+                f"to a specific column."
+            )
     for column in columns:
-        _validate_fsm_column(model_cls, column, multi=len(columns) > 1)
+        _validate_fsm_column(model_cls, column, multi=multi)
 
 
 def _validate_fsm_column(model_cls: type, column: Column, multi: bool) -> None:

@@ -1,3 +1,4 @@
+import weakref
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Generic, TypeVar
@@ -30,7 +31,12 @@ class InstanceRef(Generic[T]):
         return self.target
 
 
-FSM_EVENT_DISPATCHER_CACHE: dict[type, Any] = {}
+# WeakKeyDictionary so dynamically-built model classes (test fixtures,
+# factory patterns) don't leak. Most real-world classes outlive the process
+# anyway, but the weak ref costs us nothing.
+FSM_EVENT_DISPATCHER_CACHE: "weakref.WeakKeyDictionary[type, Any]" = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def get_class_bound_dispatcher(target_cls: type) -> Any:

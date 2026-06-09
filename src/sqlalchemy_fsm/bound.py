@@ -2,6 +2,7 @@
 
 import inspect as py_inspect
 import warnings
+import weakref
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -85,7 +86,13 @@ class SqlAlchemyHandle:
 # condition/permission/handler check. Building the Signature dominates the
 # benchmark. We cache the Signature per-callable and use `.bind()` instead.
 
-_SIGNATURE_CACHE: dict[Callable[..., Any], py_inspect.Signature | None] = {}
+# WeakKeyDictionary so transient lambdas (common as inline conditions) don't
+# pin themselves alive for the process lifetime. Built-ins and other objects
+# that can't be weakref'd fall back to a small bounded LRU.
+_SigCache = "weakref.WeakKeyDictionary[Callable[..., Any], py_inspect.Signature | None]"
+_SIGNATURE_CACHE: _SigCache = weakref.WeakKeyDictionary()  # type: ignore[assignment]
+_SIGNATURE_FALLBACK: dict[int, py_inspect.Signature | None] = {}
+_SIGNATURE_FALLBACK_MAX = 256
 
 
 def _signature_for(fn: Callable[..., Any]) -> py_inspect.Signature | None:
@@ -95,12 +102,38 @@ def _signature_for(fn: Callable[..., Any]) -> py_inspect.Signature | None:
     try:
         return _SIGNATURE_CACHE[fn]
     except KeyError:
-        try:
-            sig: py_inspect.Signature | None = py_inspect.signature(fn)
-        except (ValueError, TypeError):
-            sig = None
-        _SIGNATURE_CACHE[fn] = sig
+        pass
+    except TypeError:
+        # Object isn't weakref-able (e.g. some built-ins) — fall through to
+        # the id-keyed fallback cache below.
+        key = id(fn)
+        cached = _SIGNATURE_FALLBACK.get(key, _MISSING)
+        if cached is not _MISSING:
+            return cached
+        sig = _compute_signature(fn)
+        if len(_SIGNATURE_FALLBACK) >= _SIGNATURE_FALLBACK_MAX:
+            _SIGNATURE_FALLBACK.clear()
+        _SIGNATURE_FALLBACK[key] = sig
         return sig
+
+    sig = _compute_signature(fn)
+    try:
+        _SIGNATURE_CACHE[fn] = sig
+    except TypeError:
+        # Race: fn is weakref-able on getitem path but not setitem. Cache
+        # in the fallback instead.
+        _SIGNATURE_FALLBACK[id(fn)] = sig
+    return sig
+
+
+_MISSING: Any = object()
+
+
+def _compute_signature(fn: Callable[..., Any]) -> py_inspect.Signature | None:
+    try:
+        return py_inspect.signature(fn)
+    except (ValueError, TypeError):
+        return None
 
 
 def _call_iface_error(
@@ -151,6 +184,20 @@ class BoundFSMBase:
 
     def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
         raise NotImplementedError
+
+    def would_succeed(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
+        """True iff `to_next_state(args, kwargs)` would not raise.
+
+        Subclasses override when the equivalence isn't a plain conjunction
+        of `transition_possible`/`permissions_met`/`conditions_met` —
+        notably `BoundFSMClass`, where dispatch requires *exactly one*
+        applicable sub-handler.
+        """
+        return (
+            self.transition_possible()
+            and self.permissions_met(args, kwargs)
+            and self.conditions_met(args, kwargs)
+        )
 
 
 class BoundFSMFunction(BoundFSMBase):
@@ -228,11 +275,7 @@ class BoundFSMFunction(BoundFSMBase):
         conditions = self.meta.conditions
         if not conditions:
             return True
-        merged_args = self._merged_args(args)
-        if not self._eval_callables(conditions, merged_args, kwargs):
-            return False
-        self._validate_handler_iface(merged_args, kwargs)
-        return True
+        return self._eval_callables(conditions, self._merged_args(args), kwargs)
 
     def permissions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
         permissions = self.meta.permissions
@@ -245,6 +288,12 @@ class BoundFSMFunction(BoundFSMBase):
         new_state = self.target_state
         sqla_target = self.sqla_handle.record
         merged = self._merged_args(args)
+
+        # Surface condition/handler arg-shape mismatches before we mutate.
+        # Predicates already passed; if the handler can't bind the same
+        # args, that's a setup bug, not a runtime "condition failed".
+        if self.meta.conditions:
+            self._validate_handler_iface(merged, kwargs)
 
         self.sqla_handle.dispatch.before_state_change(source=old_state, target=new_state)
         self.set_func(*merged, **kwargs)
@@ -290,11 +339,7 @@ class AsyncBoundFSMFunction(BoundFSMFunction):
         conditions = self.meta.conditions
         if not conditions:
             return True
-        merged_args = self._merged_args(args)
-        if not await self._aeval_callables(conditions, merged_args, kwargs):
-            return False
-        self._validate_handler_iface(merged_args, kwargs)
-        return True
+        return await self._aeval_callables(conditions, self._merged_args(args), kwargs)
 
     async def apermissions_met(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
@@ -312,6 +357,9 @@ class AsyncBoundFSMFunction(BoundFSMFunction):
         sqla_target = self.sqla_handle.record
         merged = self._merged_args(args)
 
+        if self.meta.conditions:
+            self._validate_handler_iface(merged, kwargs)
+
         self.sqla_handle.dispatch.before_state_change(source=old_state, target=new_state)
         result = self.set_func(*merged, **kwargs)
         if py_inspect.iscoroutine(result):
@@ -321,6 +369,18 @@ class AsyncBoundFSMFunction(BoundFSMFunction):
 
     def transition_possible_async(self) -> bool:
         return self.transition_possible()
+
+    async def awould_succeed(
+        self, args: Iterable[Any], kwargs: Mapping[str, Any]
+    ) -> bool:
+        """Async sibling of `would_succeed`. Function-bound default: AND of
+        the three checks. `AsyncBoundFSMClass` overrides for exactly-one
+        semantics."""
+        return (
+            self.transition_possible()
+            and await self.apermissions_met(args, kwargs)
+            and await self.aconditions_met(args, kwargs)
+        )
 
 
 @dataclass(slots=True)
@@ -335,8 +395,16 @@ class TransitionStateArithmetics:
     meta_b: "meta.FSMMeta"
 
     def source_intersection(self) -> frozenset[str | None] | bool:
-        """Sources reachable by both; `"*"` on either side widens to the other.
-        Returns `False` if there is no overlap."""
+        """Sources reachable by both; `"*"` on either side widens to the
+        other. Returns `False` if there is no overlap.
+
+        Note the asymmetry: when neither side is wildcard we *require*
+        `meta_a.sources` (parent / class-transition) to be a superset of
+        `meta_b.sources` (sub-handler). A sub-handler that declares a
+        source not covered by its parent is a setup error — the parent's
+        source set is the contract the outer dispatcher promises, and a
+        wider sub-handler would silently shadow that promise.
+        """
         sources_a = self.meta_a.sources
         sources_b = self.meta_b.sources
 
@@ -349,13 +417,27 @@ class TransitionStateArithmetics:
         return False
 
     def target_intersection(self) -> str | None:
-        """The single agreed target, or `None` if the two targets conflict."""
+        """The agreed target, or `None` if the two targets conflict.
+
+        Sub-handlers under a class-based transition may legitimately
+        declare `target=None`, inheriting the parent's target. So the
+        rule is: non-None wins; equal wins; otherwise incompatible.
+
+        Callers must distinguish "both were None" (caller bug — never
+        produced by `@transition` on a sub-handler without a parent
+        target) from "two distinct concrete targets" themselves — both
+        cases return `None` here. The downstream callers (`_get_bound_sub_metas`,
+        `_edges_from_class_group`) treat both as "incompatible", which
+        is the right behavior in practice.
+        """
         target_a = self.meta_a.target
         target_b = self.meta_b.target
         if target_a == target_b:
-            return target_a  # covers both-None too
-        if None in (target_a, target_b):
-            return target_a or target_b  # the non-None one wins
+            return target_a
+        if target_a is None:
+            return target_b
+        if target_b is None:
+            return target_a
         return None  # two distinct concrete targets — incompatible
 
     def joint_conditions(self) -> tuple[Callable[..., Any], ...]:
@@ -477,8 +559,12 @@ class BoundFSMClass(BoundFSMBase):
         return self._target_cached
 
     def _applicable_subs(self) -> list[BoundFSMBase]:
-        """Sub-handlers whose source state matches the current state. Cached
-        per call site to avoid re-walking `current_state` in the inner loops."""
+        """Sub-handlers whose source state matches the current state.
+
+        Walked fresh on each call — `current_state` is read from the
+        record at call time, so memoization here would be incorrect.
+        The walk is O(#sub-handlers), which is small in practice.
+        """
         return [sub for sub in self.bound_sub_metas if sub.transition_possible()]
 
     def transition_possible(self) -> bool:
@@ -492,13 +578,26 @@ class BoundFSMClass(BoundFSMBase):
         # accepts the caller — mirrors the dispatch in to_next_state().
         return any(sub.permissions_met(args, kwargs) for sub in self._applicable_subs())
 
-    def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
-        applicable = self._applicable_subs()
-        accepted = [
+    def _accepted_subs(
+        self, args: Iterable[Any], kwargs: Mapping[str, Any]
+    ) -> list[BoundFSMBase]:
+        """Sub-handlers that pass source, permissions, AND conditions —
+        the exact set `to_next_state` will pick a winner from."""
+        return [
             sub
-            for sub in applicable
+            for sub in self._applicable_subs()
             if sub.permissions_met(args, kwargs) and sub.conditions_met(args, kwargs)
         ]
+
+    def would_succeed(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
+        # Class transitions need *exactly one* accepted sub-handler. A bare
+        # conjunction of permissions_met/conditions_met can over-approximate
+        # (different subs satisfying each), causing `can_proceed → True` but
+        # `set() → InvalidSourceStateError`.
+        return len(self._accepted_subs(args, kwargs)) == 1
+
+    def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
+        accepted = self._accepted_subs(args, kwargs)
         if len(accepted) > 1:
             raise exc.SetupError(
                 f"Can transition with multiple handlers ({accepted})"
@@ -542,15 +641,31 @@ class AsyncBoundFSMClass(BoundFSMClass):
                 return True
         return False
 
+    async def _aaccepted_subs(
+        self, args: Iterable[Any], kwargs: Mapping[str, Any]
+    ) -> list["AsyncBoundFSMFunction"]:
+        # Plain loop (not a comprehension) because each `await` is a real
+        # suspension point — sequential evaluation is intentional so we
+        # don't fan out coroutines we may not need (and so any side-effect
+        # ordering matches the sync version).
+        out: list[AsyncBoundFSMFunction] = []
+        for sub in self._applicable_async_subs():
+            if await sub.apermissions_met(args, kwargs) and await sub.aconditions_met(
+                args, kwargs
+            ):
+                out.append(sub)  # noqa: PERF401
+        return out
+
+    async def awould_succeed(
+        self, args: Iterable[Any], kwargs: Mapping[str, Any]
+    ) -> bool:
+        # See `BoundFSMClass.would_succeed` for why this isn't an AND.
+        return len(await self._aaccepted_subs(args, kwargs)) == 1
+
     async def ato_next_state(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
     ) -> None:
-        accepted: list[AsyncBoundFSMFunction] = [
-            sub
-            for sub in self._applicable_async_subs()
-            if await sub.apermissions_met(args, kwargs)
-            and await sub.aconditions_met(args, kwargs)
-        ]
+        accepted = await self._aaccepted_subs(args, kwargs)
         if len(accepted) > 1:
             raise exc.SetupError(
                 f"Can transition with multiple handlers ({accepted})"

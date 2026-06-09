@@ -6,6 +6,8 @@ from typing import ClassVar
 
 from sqlalchemy import types
 
+from .util import normalize_subscript_states
+
 
 class FSMField(types.String):
     # Subscripted subclasses (`FSMField["a","b"]`) are pure tag classes —
@@ -36,20 +38,7 @@ class FSMField(types.String):
     _subscript_cache: ClassVar[dict[tuple[str, ...], type[FSMField]]] = {}
 
     def __class_getitem__(cls, item: object) -> type[FSMField]:
-        if isinstance(item, str):
-            states = (item,)
-        elif isinstance(item, tuple):
-            states = item  # type: ignore[assignment]
-        else:
-            raise TypeError(f"FSMField[...] expects strings; got {type(item).__name__}")
-
-        bad = [s for s in states if not isinstance(s, str)]
-        if bad:
-            raise TypeError(f"FSMField[...] expects strings; got {bad!r}")
-        if not states:
-            raise TypeError("FSMField[...] requires at least one state")
-
-        key = tuple(sorted(set(states)))
+        key = normalize_subscript_states("FSMField", item)
         cached = cls._subscript_cache.get(key)
         if cached is not None:
             return cached
