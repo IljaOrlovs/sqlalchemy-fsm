@@ -88,12 +88,68 @@ class TestRenderCheckConstraint:
 
     def test_sql_lists_all_states_alphabetically(self):
         c = render_check_constraint(Article)
-        sql = str(c.sqltext)
+        # Inline literals so the rendered SQL is comparable as a string;
+        # the in_() expression otherwise carries bind-param placeholders.
+        sql = str(c.sqltext.compile(compile_kwargs={"literal_binds": True}))
         # Sort guarantee makes the rendered SQL stable across runs.
         assert "'archived'" in sql
         assert "'deleted'" in sql
         assert "'draft'" in sql
         assert "'published'" in sql
+
+    def test_state_with_single_quote_is_escaped(self):
+        """Regression: a state containing ``'`` must be SQL-escaped, not
+        spliced raw. Pre-fix, ``_check_sql`` f-stringed the value and
+        produced syntactically broken CHECK SQL (and was technically an
+        injection vector for any caller that ever sourced state names
+        from outside the codebase)."""
+        Base = declarative_base()
+
+        class M(Base):
+            __tablename__ = "quoted_state"
+            id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+            state = sqlalchemy.Column(FSMField, nullable=False)
+
+            @transition(source="o'brien", target="d'arcy")
+            def rename(self):
+                pass
+
+        c = render_check_constraint(M)
+        sql = str(c.sqltext.compile(compile_kwargs={"literal_binds": True}))
+        # SA inlines literals with doubled single quotes.
+        assert "'o''brien'" in sql
+        assert "'d''arcy'" in sql
+
+    def test_reserved_word_column_name_is_quoted_per_dialect(self):
+        """Regression: a column whose name collides with a SQL reserved
+        word must be quoted in the CHECK body so the constraint is valid
+        on dialects that care (Postgres). Pre-fix, ``_check_sql`` bare-
+        substituted the name, and autogen would see permanent drift
+        because the DB reflected the quoted form."""
+        Base = declarative_base()
+
+        class M(Base):
+            __tablename__ = "reserved_word_col"
+            id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+            # `order` is reserved on every major dialect.
+            order = sqlalchemy.Column(
+                FSMField, nullable=False, name="order"
+            )
+
+            @transition(source="open", target="closed")
+            def close(self):
+                pass
+
+        from sqlalchemy.dialects import postgresql
+
+        c = render_check_constraint(M, column=M.__table__.c.order)
+        pg_sql = str(
+            c.sqltext.compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+        assert '"order"' in pg_sql
 
 
 class TestAttachFsmConstraints:

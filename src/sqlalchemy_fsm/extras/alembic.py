@@ -43,14 +43,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import CheckConstraint
+from sqlalchemy import column as sa_column
 from sqlalchemy import inspect as sqla_inspect
 
 from ..introspection import collect_transition_states
 from ..sqltypes import FSMField
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from sqlalchemy import Table
     from sqlalchemy.engine import Inspector
+    from sqlalchemy.sql.elements import ColumnElement
 
 try:
     from alembic.autogenerate import comparators as _comparators
@@ -107,9 +111,15 @@ def fsm_check_name(table_name: str, column_name: str) -> str:
     return f"ck_{table_name}_{column_name}_fsm"
 
 
-def _check_sql(column_name: str, states: set[str]) -> str:
-    quoted = ", ".join(f"'{s}'" for s in sorted(states))
-    return f"{column_name} IN ({quoted})"
+def _check_expression(column_name: str, states: Iterable[str]) -> ColumnElement:
+    """Build the CHECK body as a SA expression.
+
+    Hands literal escaping and identifier quoting off to SA's compiler —
+    so a state like ``"O'Brien"`` round-trips safely, and a column named
+    ``order`` is quoted per the active dialect at DDL emission time. The
+    sort is purely so the rendered SQL is deterministic across runs.
+    """
+    return sa_column(column_name).in_(sorted(states))
 
 
 def render_check_constraint(model_cls: type, column: Any = None) -> CheckConstraint:
@@ -126,7 +136,8 @@ def render_check_constraint(model_cls: type, column: Any = None) -> CheckConstra
     states = collect_states(model_cls, column=column if len(cols) > 1 else None)
     table_name = sqla_inspect(model_cls).local_table.name
     return CheckConstraint(
-        _check_sql(column.name, states), name=fsm_check_name(table_name, column.name)
+        _check_expression(column.name, states),
+        name=fsm_check_name(table_name, column.name),
     )
 
 
@@ -221,6 +232,8 @@ def compare_fsm_check(
     except NotImplementedError:
         return
 
+    dialect = _resolve_dialect(autogen_context, insp)
+
     for col in (c for c in metadata_table.columns if isinstance(c.type, FSMField)):
         expected_name = fsm_check_name(table_name, col.name)
         expected = next(
@@ -238,7 +251,7 @@ def compare_fsm_check(
         if (
             expected is not None
             and db is not None
-            and _normalize_sqltext(str(expected.sqltext))
+            and _normalize_sqltext(_render_sqltext(expected.sqltext, dialect))
             == _normalize_sqltext(db.get("sqltext", ""))
         ):
             continue  # in sync
@@ -274,3 +287,36 @@ def register_autogenerate_comparator() -> None:
 
 def _normalize_sqltext(text: str) -> str:
     return " ".join(text.split()).strip().lower()
+
+
+def _resolve_dialect(autogen_context: Any, insp: Any) -> Any:
+    """Best-effort dialect lookup for compiling the model-side sqltext.
+
+    Alembic's ``MigrationContext`` exposes ``dialect`` directly; older
+    or mocked contexts may not. Fall back to ``insp.bind.dialect``, then
+    to a default dialect — at worst we lose dialect-specific identifier
+    quoting in the comparison, which only matters for reserved-word
+    column names.
+    """
+    dialect = getattr(autogen_context, "dialect", None)
+    if dialect is not None:
+        return dialect
+    bind = getattr(insp, "bind", None)
+    if bind is not None:
+        return bind.dialect
+    from sqlalchemy.engine import default
+
+    return default.DefaultDialect()
+
+
+def _render_sqltext(sqltext: Any, dialect: Any) -> str:
+    """Compile a CHECK body to dialect-specific SQL with literals inlined.
+
+    Falls back to ``str()`` if the value isn't a SA expression (legacy
+    callers that built CHECKs from raw strings) — those stay subject to
+    whatever escaping they applied themselves.
+    """
+    compile_fn = getattr(sqltext, "compile", None)
+    if compile_fn is None:
+        return str(sqltext)
+    return str(compile_fn(dialect=dialect, compile_kwargs={"literal_binds": True}))

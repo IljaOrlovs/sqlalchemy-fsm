@@ -710,7 +710,7 @@ class TestAlembicComparator:
         md = MetaData()
         check_name = _alembic_extras.fsm_check_name(name, "state")
         constraint = CheckConstraint(
-            _alembic_extras._check_sql("state", set(states)), name=check_name
+            _alembic_extras._check_expression("state", set(states)), name=check_name
         )
         table = Table(
             name,
