@@ -140,3 +140,53 @@ def _edges_from_class_group(
             continue
         out.extend(TransitionEdge(s, target, label) for s in sources)
     return out
+
+
+def available_transitions(
+    instance: Any,
+    *args: Any,
+    column: Any = None,
+    **kwargs: Any,
+) -> list[tuple[str, FsmTransition]]:
+    """Return `(name, descriptor)` pairs whose source matches the
+    instance's current state AND whose permissions+conditions would
+    accept these `*args`/`**kwargs`.
+
+    Mirrors django-fsm's `get_available_<field>_transitions(user)` /
+    `get_available_user_<field>_transitions(user)` — useful for UIs
+    that render the action buttons available right now for a given
+    row and user. Pass the same args you'd pass to `set()`.
+
+    For async transitions use `aavailable_transitions(...)` — this
+    function only consults sync `can_proceed`.
+    """
+    out: list[tuple[str, FsmTransition]] = []
+    for name, fsm_t in iter_transitions(type(instance), column=column):
+        if fsm_t.meta.is_async:
+            # Sync helper can't evaluate async checks; skip rather than
+            # silently miss a permission failure.
+            continue
+        bound_descriptor = getattr(instance, name)
+        if bound_descriptor.can_proceed(*args, **kwargs):
+            out.append((name, fsm_t))
+    return out
+
+
+async def aavailable_transitions(
+    instance: Any,
+    *args: Any,
+    column: Any = None,
+    **kwargs: Any,
+) -> list[tuple[str, FsmTransition]]:
+    """Async sibling of `available_transitions`. Awaits `acan_proceed`
+    on async transitions and `can_proceed` on sync ones."""
+    out: list[tuple[str, FsmTransition]] = []
+    for name, fsm_t in iter_transitions(type(instance), column=column):
+        bound_descriptor = getattr(instance, name)
+        if fsm_t.meta.is_async:
+            passed = await bound_descriptor.acan_proceed(*args, **kwargs)
+        else:
+            passed = bound_descriptor.can_proceed(*args, **kwargs)
+        if passed:
+            out.append((name, fsm_t))
+    return out

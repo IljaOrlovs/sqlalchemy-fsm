@@ -129,6 +129,11 @@ Three properties are checked:
   edges from the column's `default=`. (`source="*"` wildcards count as
   edges from every declared state.)
 
+The subscripted form derives `length=` as `longest_state * 3` so the
+column has headroom for a renamed or longer state later without a
+column-width migration. Override with an explicit `length=` if you
+want a tighter or wider bound.
+
 A typed `FSMField[...]` column must declare a scalar `default=<state>`
 so reachability can be evaluated. If your FSM genuinely starts from
 NULL (the row is inserted with no state set, and the first transition
@@ -196,8 +201,12 @@ session.query(BlogPost).filter(~BlogPost.publish())         # everything else
 
 ## Events
 
-The library hooks into SQLAlchemy's event system and emits
-`before_state_change` and `after_state_change` per transition:
+The library hooks into SQLAlchemy's event system and emits two pairs
+of events around every transition. Pick whichever signature suits
+your listener — both pairs fire on every transition.
+
+**Minimal — `before_state_change` / `after_state_change`.** Just the
+source and target state:
 
 ```python
 from sqlalchemy.event import listens_for
@@ -207,6 +216,24 @@ def on_change(instance, source, target):
     ...
 ```
 
+**Full payload — `before_transition` / `after_transition`.** Adds the
+transition method name and the `*args` / `**kwargs` you passed to
+`set()` / `aset()`. Use these when one listener handles several
+transitions and needs to tell them apart, or wants to log the call
+arguments:
+
+```python
+@listens_for(BlogPost, "after_transition")
+def audit(instance, transition_name, source, target, args, kwargs):
+    log.info(
+        "%s: %s -> %s via %s by %s",
+        instance.id, source, target, transition_name, kwargs.get("user"),
+    )
+```
+
+For class-grouped transitions, `transition_name` is the outer (public)
+name — `"publish"`, not the sub-handler method like `"from_draft"`.
+
 Remove with `sqlalchemy.event.remove(...)`.
 
 **Listeners must be plain (non-async) functions.** SQLAlchemy's
@@ -214,14 +241,55 @@ Remove with `sqlalchemy.event.remove(...)`.
 returns a coroutine that nothing awaits, so its body silently doesn't
 run. Wrap async work in `asyncio.create_task(...)` if you need it.
 
-**`before_state_change` runs before the handler and before the column
-is mutated.** Raising from it cleanly aborts the transition — state is
-unchanged. **`after_state_change` runs *after* the handler has
-returned and *after* the column has been mutated.** If an after-listener
-raises, the in-memory state has already been overwritten and won't be
-rolled back; the exception still propagates to the caller. Treat
-`after_state_change` as best-effort notification, not a transactional
-gate.
+**`before_state_change` / `before_transition` run before the handler
+and before the column is mutated.** Raising from a before-listener
+cleanly aborts the transition — state is unchanged. **The `after_`
+events run *after* the handler has returned and *after* the column
+has been mutated.** If an after-listener raises, the in-memory state
+has already been overwritten and won't be rolled back; the exception
+still propagates to the caller. Treat the `after_` events as
+best-effort notification, not a transactional gate.
+
+## Transition metadata
+
+`@transition(custom={...})` attaches a free-form dict to the
+transition — sqlalchemy-fsm ignores it, but admin UIs, RBAC layers,
+docs generators, etc. can read it via `Model.attr.meta.custom`:
+
+```python
+class BlogPost(Base):
+    ...
+    @transition(
+        source="draft", target="published",
+        custom={"label": "Publish post", "icon": "rocket", "groups": ["editor"]},
+    )
+    def publish(self): ...
+
+BlogPost.publish.meta.custom["label"]   # "Publish post"
+```
+
+The dict is copied and frozen on decoration, so callers can't mutate
+it after the fact.
+
+## Available transitions
+
+`available_transitions(instance, *args, **kwargs)` returns the
+transitions whose source matches the instance's current state AND
+whose permissions and conditions accept these args — useful for
+rendering "what can this user do with this row right now?" action
+lists in a UI:
+
+```python
+from sqlalchemy_fsm import available_transitions
+
+for name, fsm_t in available_transitions(post, user=current_user):
+    print(name, fsm_t.meta.target, fsm_t.meta.custom.get("label"))
+```
+
+`aavailable_transitions(...)` is the async sibling — it awaits
+`acan_proceed` on `@async_transition` decorators and stays sync for
+the rest. Pass `column=` on multi-column models to filter to one
+state machine.
 
 ## Async (SQLAlchemy 2.x `AsyncSession`)
 
@@ -367,12 +435,13 @@ SQLAlchemy instead of Django. ([django-fsm] is archived since 2024;
 | Declared state set | `FSMField["a","b","c"]` | Free-form |
 | Startup graph validation | Correctness, completeness, reachability — `SetupError` at import | None — typo'd `target=` silently assigns |
 | DB constraint | `CHECK (col IN (...))` via Alembic extra, autogen diff | None |
-| `@transition` kwargs | `source`, `target`, `conditions`, `permissions` | + `on_error`, `permission` (singular), `custom` |
+| `@transition` kwargs | `source`, `target`, `conditions`, `permissions`, `custom` | + `on_error`, `permission` (singular) |
 | Condition signature | `(instance, *args, **kwargs)` forwarded from `set()` | `(instance)` |
 | Permissions | List of callables; receive `set()` kwargs | One: Django perm string or `(instance, user) -> bool` |
 | Optimistic locking | Use SA `version_id_col` | `ConcurrentTransitionMixin` filters UPDATE by loaded state |
 | Async | `@async_transition`, `aset` / `acan_proceed`, mixed sync/async checks | None |
-| Events | SA `before_state_change` / `after_state_change` | Django signals `pre_transition` / `post_transition` |
+| Events | SA `before_state_change`/`after_state_change` (source, target) and `before_transition`/`after_transition` (+ name, args, kwargs) | Django signals `pre_transition` / `post_transition` (name, args, kwargs) |
+| Available-transition helper | `available_transitions(instance, *args, **kwargs)` and async sibling | `get_available_<field>_transitions(user)` |
 | Dynamic target | Class-grouped transitions (dispatch by source) | `RETURN_VALUE(...)` / `GET_STATE(...)` |
 | Proxy class per state | None | `state_choices=` swaps `__class__` |
 | Block direct writes | No (`obj.state = "x"` always works) | `protected=True` |
@@ -414,9 +483,6 @@ commits.
 - `protected=True`. Bare attribute writes aren't gated; the CHECK
   constraint catches the bad value at commit.
 - Admin integration.
-- Per-instance `get_available_<field>_transitions(user)`. Use
-  `iter_transitions(cls)` / `collect_edges(cls)` and filter
-  yourself.
 
 ### Migrating from django-fsm
 
@@ -427,7 +493,9 @@ commits.
 | `permission="app.publish"` | `permissions=[lambda inst, user=None, **_: user and user.has_perm("app.publish")]` |
 | `condition(instance)` | `condition(instance, *args, **kwargs)` |
 | `instance.do_x(); instance.save()` | `instance.do_x.set(); session.commit()` |
-| `pre_transition` / `post_transition` | `event.listen(Model, "before_state_change" \| "after_state_change", fn)` |
+| `pre_transition` / `post_transition` | `event.listen(Model, "before_transition" \| "after_transition", fn)` — listener gets `(instance, transition_name, source, target, args, kwargs)` |
+| `get_available_<field>_transitions(user)` | `available_transitions(instance, user=user)` (or `aavailable_transitions` for async) |
+| `custom={"label": …}` | `custom={"label": …}` — read via `Model.attr.meta.custom` |
 | `ConcurrentTransitionMixin` | `version_id_col` on the mapper, or `SELECT … FOR UPDATE` |
 | `RETURN_VALUE("a", "b")` | Class-grouped transition with sub-handlers |
 | `manage.py graph_transitions` | `print(to_mermaid(Model))` |

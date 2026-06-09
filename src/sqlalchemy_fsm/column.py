@@ -26,7 +26,7 @@ from .sqltypes import FSMField
 from .util import get_or_build_subscript_subclass
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Mapping
 
     from .transition import (
         AsyncFsmTransition,
@@ -98,6 +98,7 @@ class FSMColumn(sa.Column):
         target: str | None = None,
         conditions: Iterable[FSMCondition] = (),
         permissions: Iterable[FSMCondition] = (),
+        custom: Mapping[str, Any] | None = None,
     ) -> Callable[[Any], SyncFsmTransition]:
         """Like the module-level `@transition`, but scoped to this column.
 
@@ -106,7 +107,9 @@ class FSMColumn(sa.Column):
         from different columns on the same model is fine — each transition
         only writes back to the column it was declared on.
         """
-        return self._make_decorator(False, source, target, conditions, permissions)  # type: ignore[return-value]
+        return self._make_decorator(  # type: ignore[return-value]
+            False, source, target, conditions, permissions, custom
+        )
 
     def async_transition(
         self,
@@ -114,9 +117,12 @@ class FSMColumn(sa.Column):
         target: str | None = None,
         conditions: Iterable[FSMCondition] = (),
         permissions: Iterable[FSMCondition] = (),
+        custom: Mapping[str, Any] | None = None,
     ) -> Callable[[Any], AsyncFsmTransition]:
         """Async sibling of `.transition`. See `sqlalchemy_fsm.async_transition`."""
-        return self._make_decorator(True, source, target, conditions, permissions)  # type: ignore[return-value]
+        return self._make_decorator(  # type: ignore[return-value]
+            True, source, target, conditions, permissions, custom
+        )
 
     def _make_decorator(
         self,
@@ -125,11 +131,14 @@ class FSMColumn(sa.Column):
         target: str | None,
         conditions: Iterable[Callable[..., Any]],
         permissions: Iterable[Callable[..., Any]],
+        custom: Mapping[str, Any] | None,
     ) -> Callable[[Any], FsmTransition]:
         from .transition import _make_transition  # local import to avoid cycle
 
         self._validate_states(source, target)
-        inner = _make_transition(is_async, source, target, conditions, permissions)
+        inner = _make_transition(
+            is_async, source, target, conditions, permissions, custom
+        )
         column_ref = self
 
         def wrapper(subject: Any) -> FsmTransition:

@@ -3,7 +3,7 @@
 import asyncio
 import inspect as py_inspect
 import warnings
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, overload, runtime_checkable
 
 if TYPE_CHECKING:
@@ -183,7 +183,7 @@ class InstanceBoundFsmTransition(_InstanceBoundBase):
             )
         if not bound_meta.conditions_met(args, kwargs):
             raise exc.PreconditionError("Preconditions are not satisfied.", **ctx)
-        return bound_meta.to_next_state(args, kwargs)
+        return bound_meta.to_next_state(args, kwargs, transition_name=func.__name__)
 
     def can_proceed(self, *args: Any, **kwargs: Any) -> bool:
         # Delegate to `would_succeed` so the result mirrors what `set()`
@@ -241,7 +241,9 @@ class AsyncInstanceBoundFsmTransition(_InstanceBoundBase):
             )
         if not await bound_meta.aconditions_met(args, kwargs):
             raise exc.PreconditionError("Preconditions are not satisfied.", **ctx)
-        return await bound_meta.ato_next_state(args, kwargs)
+        return await bound_meta.ato_next_state(
+            args, kwargs, transition_name=func.__name__
+        )
 
     async def acan_proceed(self, *args: Any, **kwargs: Any) -> bool:
         self._require_running_loop()
@@ -335,6 +337,7 @@ def _make_transition(
     target: str | None,
     conditions: Iterable[Callable[..., Any]],
     permissions: Iterable[Callable[..., Any]],
+    custom: Mapping[str, Any] | None,
 ) -> Callable[[Any], FsmTransition]:
     fn_cls = bound.AsyncBoundFSMFunction if is_async else bound.BoundFSMFunction
     cls_cls = bound.AsyncBoundFSMClass if is_async else bound.BoundFSMClass
@@ -356,7 +359,14 @@ def _make_transition(
                 f"@transition expects a callable or class; got {subject!r}"
             )
         meta = FSMMeta(
-            source, target, conditions, (), bound_cls, permissions, is_async=is_async
+            source,
+            target,
+            conditions,
+            (),
+            bound_cls,
+            permissions,
+            is_async=is_async,
+            custom=custom,
         )
         return transition_cls(meta, subject)
 
@@ -368,8 +378,16 @@ def transition(
     target: str | None = None,
     conditions: Iterable[FSMCondition] = (),
     permissions: Iterable[FSMCondition] = (),
+    custom: Mapping[str, Any] | None = None,
 ) -> Callable[[Any], SyncFsmTransition]:
-    return _make_transition(False, source, target, conditions, permissions)  # type: ignore[return-value]
+    """Decorate a method as a state transition.
+
+    `custom` is a free-form metadata dict — sqlalchemy-fsm ignores it,
+    but it's available via `Model.attr.meta.custom` for tools to read
+    (admin labels, button text, RBAC tags, etc.). The dict is frozen
+    on decoration.
+    """
+    return _make_transition(False, source, target, conditions, permissions, custom)  # type: ignore[return-value]
 
 
 def async_transition(
@@ -377,8 +395,12 @@ def async_transition(
     target: str | None = None,
     conditions: Iterable[FSMCondition] = (),
     permissions: Iterable[FSMCondition] = (),
+    custom: Mapping[str, Any] | None = None,
 ) -> Callable[[Any], AsyncFsmTransition]:
     """Like `@transition`, but the handler — and any conditions/permissions —
     may be `async def`. Invoke via `await instance.<name>.aset(...)`; only
-    works inside a running asyncio event loop. Sync callables remain valid."""
-    return _make_transition(True, source, target, conditions, permissions)  # type: ignore[return-value]
+    works inside a running asyncio event loop. Sync callables remain valid.
+
+    See `transition` for the `custom=` metadata bag.
+    """
+    return _make_transition(True, source, target, conditions, permissions, custom)  # type: ignore[return-value]

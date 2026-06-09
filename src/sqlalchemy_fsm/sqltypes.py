@@ -27,11 +27,14 @@ class FSMField(types.String):
             default="draft",
         )
 
-    The subscripted form also derives a column `length=` equal to the
-    longest declared state name, so dialects that care about ``VARCHAR``
-    sizing (Postgres warns, MySQL forbids unsized varchar in some
-    configs) get a sensible bound. Override by passing ``length=`` to
-    the constructor explicitly: ``FSMField["a","b"](length=64)``.
+    The subscripted form also derives a column `length=` from the
+    longest declared state name, multiplied by `_LENGTH_PADDING_FACTOR`
+    (default 3) — so dialects that care about ``VARCHAR`` sizing
+    (Postgres warns, MySQL forbids unsized varchar in some configs)
+    get a sensible bound, with headroom for renaming a state or adding
+    a longer one later without a column-width migration. Override by
+    passing ``length=`` to the constructor explicitly:
+    ``FSMField["a","b"](length=64)``.
 
     The plain `FSMField` form (no subscript) remains supported, skips
     the startup check, and uses SA's default (unbounded) ``String``.
@@ -39,13 +42,20 @@ class FSMField(types.String):
 
     _allowed_states: frozenset[str] | None = None
 
+    # Multiplier on the longest declared state name for the derived
+    # `length=`. Padded so a future state rename or a fourth state
+    # that's a bit longer than today's longest doesn't force a
+    # column-width migration.
+    _LENGTH_PADDING_FACTOR: ClassVar[int] = 3
+
     # Cache of (states-tuple → subclass) so `FSMField["a","b"]` returns the
     # same class on repeated lookups — important for `isinstance` checks.
     _subscript_cache: ClassVar[dict[tuple[str, ...], type[FSMField]]] = {}
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         if self._allowed_states is not None and "length" not in kwargs and not args:
-            kwargs["length"] = max(len(s) for s in self._allowed_states)
+            longest = max(len(s) for s in self._allowed_states)
+            kwargs["length"] = longest * self._LENGTH_PADDING_FACTOR
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
 
     def __class_getitem__(cls, item: object) -> type[FSMField]:

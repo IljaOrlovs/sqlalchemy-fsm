@@ -1,16 +1,20 @@
 """`FSMMeta` — the validated descriptor attached to every `@transition`."""
 
 import collections.abc
-from collections.abc import Callable, Iterable
+import types
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from . import util
+
+_EMPTY_CUSTOM: Mapping[str, Any] = types.MappingProxyType({})
 
 
 class FSMMeta:
     __slots__ = (
         "bound_cls",
         "conditions",
+        "custom",
         "extra_call_args",
         "is_async",
         "permissions",
@@ -25,6 +29,7 @@ class FSMMeta:
     sources: frozenset[str | None]
     target: str | None
     is_async: bool
+    custom: Mapping[str, Any]
 
     def __init__(
         self,
@@ -35,6 +40,7 @@ class FSMMeta:
         bound_cls: type,
         permissions: Iterable[Callable[..., Any]] = (),
         is_async: bool | None = None,
+        custom: Mapping[str, Any] | None = None,
     ) -> None:
         # `is_async` is fully derivable from `bound_cls` — keep the kwarg
         # for backwards compatibility, but treat any explicit value that
@@ -55,6 +61,11 @@ class FSMMeta:
         self.conditions = tuple(conditions)
         self.permissions = tuple(permissions)
         self.extra_call_args = tuple(extra_args)
+        # Freeze caller-supplied dict so listeners can't mutate it across
+        # invocations and leak state between transitions.
+        self.custom = (
+            _EMPTY_CUSTOM if not custom else types.MappingProxyType(dict(custom))
+        )
 
         if target is not None:
             if not util.is_valid_fsm_state(target):
@@ -90,5 +101,6 @@ class FSMMeta:
             f"target={self.target!r} "
             f"conditions={self.conditions!r} "
             f"permissions={self.permissions!r} "
-            f"extra call args={self.extra_call_args!r}>"
+            f"extra call args={self.extra_call_args!r} "
+            f"custom={dict(self.custom)!r}>"
         )

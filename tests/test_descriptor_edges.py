@@ -78,9 +78,9 @@ def test_set_after_expunge_mutates_in_memory():
         session.commit()
         session.expunge_all()
 
-        assert cast(str, a.state) == "draft"
+        assert cast("str", a.state) == "draft"
         a.publish.set()
-        assert cast(str, a.state) == "published"
+        assert cast("str", a.state) == "published"
     finally:
         session.close()
 
@@ -111,7 +111,7 @@ def test_set_works_on_mapped_instance_overriding_bool():
     f = Falsy()
     assert not bool(f)
     f.publish.set()
-    assert cast(str, f.state) == "published"
+    assert cast("str", f.state) == "published"
 
 
 def test_exception_carries_structured_fields():
@@ -151,7 +151,7 @@ def test_set_works_across_sessions():
         a.publish.set()
         s2.commit()
 
-        assert cast(str, a.state) == "published"
+        assert cast("str", a.state) == "published"
     finally:
         s1.close()
         s2.close()

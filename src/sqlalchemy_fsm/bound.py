@@ -223,7 +223,12 @@ class BoundFSMBase:
     def permissions_met(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
         raise NotImplementedError
 
-    def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
+    def to_next_state(
+        self,
+        args: Iterable[Any],
+        kwargs: Mapping[str, Any],
+        transition_name: str | None = None,
+    ) -> None:
         raise NotImplementedError
 
     def would_succeed(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> bool:
@@ -305,11 +310,22 @@ class BoundFSMFunction(BoundFSMBase):
             return True
         return self._eval_callables(permissions, self._merged_args(args), kwargs)
 
-    def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
+    def to_next_state(
+        self,
+        args: Iterable[Any],
+        kwargs: Mapping[str, Any],
+        transition_name: str | None = None,
+    ) -> None:
         old_state = self.current_state
         new_state = self.target_state
         sqla_target = self.sqla_handle.record
         merged = self._merged_args(args)
+        call_args = tuple(args)
+        # `transition_name` overrides the sub-handler's own __name__ when a
+        # class-grouped transition dispatches into a sub — so listeners see
+        # the public name the user wrote (`publish`), not the dispatcher
+        # method (`from_draft`).
+        name = transition_name or self.set_func.__name__
 
         # Surface condition/handler arg-shape mismatches before we mutate.
         # Predicates already passed; if the handler can't bind the same
@@ -317,10 +333,25 @@ class BoundFSMFunction(BoundFSMBase):
         if self.meta.conditions:
             self._validate_handler_iface(merged, kwargs)
 
-        self.sqla_handle.dispatch.before_state_change(source=old_state, target=new_state)
+        dispatch = self.sqla_handle.dispatch
+        dispatch.before_state_change(source=old_state, target=new_state)
+        dispatch.before_transition(
+            transition_name=name,
+            source=old_state,
+            target=new_state,
+            args=call_args,
+            kwargs=kwargs,
+        )
         self.set_func(*merged, **kwargs)
         setattr(sqla_target, self.sqla_handle.column_name, new_state)
-        self.sqla_handle.dispatch.after_state_change(source=old_state, target=new_state)
+        dispatch.after_state_change(source=old_state, target=new_state)
+        dispatch.after_transition(
+            transition_name=name,
+            source=old_state,
+            target=new_state,
+            args=call_args,
+            kwargs=kwargs,
+        )
 
     def __repr__(self) -> str:
         return (
@@ -364,20 +395,40 @@ class AsyncBoundFSMFunction(BoundFSMFunction):
         return await self._aeval_callables(permissions, self._merged_args(args), kwargs)
 
     async def ato_next_state(
-        self, args: Iterable[Any], kwargs: Mapping[str, Any]
+        self,
+        args: Iterable[Any],
+        kwargs: Mapping[str, Any],
+        transition_name: str | None = None,
     ) -> None:
         old_state = self.current_state
         new_state = self.target_state
         sqla_target = self.sqla_handle.record
         merged = self._merged_args(args)
+        call_args = tuple(args)
+        name = transition_name or self.set_func.__name__
 
         if self.meta.conditions:
             self._validate_handler_iface(merged, kwargs)
 
-        self.sqla_handle.dispatch.before_state_change(source=old_state, target=new_state)
+        dispatch = self.sqla_handle.dispatch
+        dispatch.before_state_change(source=old_state, target=new_state)
+        dispatch.before_transition(
+            transition_name=name,
+            source=old_state,
+            target=new_state,
+            args=call_args,
+            kwargs=kwargs,
+        )
         await _resolve_awaitable(self.set_func(*merged, **kwargs))
         setattr(sqla_target, self.sqla_handle.column_name, new_state)
-        self.sqla_handle.dispatch.after_state_change(source=old_state, target=new_state)
+        dispatch.after_state_change(source=old_state, target=new_state)
+        dispatch.after_transition(
+            transition_name=name,
+            source=old_state,
+            target=new_state,
+            args=call_args,
+            kwargs=kwargs,
+        )
 
     async def awould_succeed(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
@@ -635,13 +686,21 @@ class BoundFSMClass(BoundFSMBase):
         # `set() → InvalidSourceStateError`.
         return len(self._accepted_subs(args, kwargs)) == 1
 
-    def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
+    def to_next_state(
+        self,
+        args: Iterable[Any],
+        kwargs: Mapping[str, Any],
+        transition_name: str | None = None,
+    ) -> None:
         accepted = self._accepted_subs(args, kwargs)
         if len(accepted) > 1:
             raise exc.SetupError(f"Can transition with multiple handlers ({accepted})")
         if not accepted:
             self._raise_no_accepted_sub(args, kwargs)
-        return accepted[0].to_next_state(args, kwargs)
+        # Forward the public transition name (passed down from the
+        # descriptor) so events see `publish`, not the sub-handler's
+        # method name like `from_draft`.
+        return accepted[0].to_next_state(args, kwargs, transition_name=transition_name)
 
     def _raise_no_accepted_sub(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
@@ -739,14 +798,19 @@ class AsyncBoundFSMClass(BoundFSMClass):
         return len(await self._aaccepted_subs(args, kwargs)) == 1
 
     async def ato_next_state(
-        self, args: Iterable[Any], kwargs: Mapping[str, Any]
+        self,
+        args: Iterable[Any],
+        kwargs: Mapping[str, Any],
+        transition_name: str | None = None,
     ) -> None:
         accepted = await self._aaccepted_subs(args, kwargs)
         if len(accepted) > 1:
             raise exc.SetupError(f"Can transition with multiple handlers ({accepted})")
         if not accepted:
             await self._araise_no_accepted_sub(args, kwargs)
-        return await accepted[0].ato_next_state(args, kwargs)
+        return await accepted[0].ato_next_state(
+            args, kwargs, transition_name=transition_name
+        )
 
     async def _araise_no_accepted_sub(
         self, args: Iterable[Any], kwargs: Mapping[str, Any]
