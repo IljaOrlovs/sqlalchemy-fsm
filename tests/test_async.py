@@ -189,9 +189,7 @@ class AsyncHandlerDoc(AsyncBase):
     async def publish(self):
         type(self).side_effect.append("published")
 
-    @async_transition(
-        source="draft", target="archived", permissions=[_async_is_editor]
-    )
+    @async_transition(source="draft", target="archived", permissions=[_async_is_editor])
     async def archive(self, user=None):
         type(self).side_effect.append("archived")
 
@@ -278,9 +276,7 @@ class TestAsyncTransition:
                 self.state = "draft"
                 super().__init__(*a, **kw)
 
-            @async_transition(
-                source="draft", target="published", conditions=[_never]
-            )
+            @async_transition(source="draft", target="published", conditions=[_never])
             async def publish(self):
                 pass
 
@@ -334,7 +330,7 @@ class TestAsyncClassTransitionMixingForbidden:
             _ = _Bad().go.acan_proceed
 
 
-# --- regression tests for the new awaitable __call__ and isawaitable fix ---
+# --- awaitable predicate + awaitable-condition resolution ----------------
 
 
 class AwaitableDoc(AsyncBase):
@@ -352,8 +348,8 @@ class AwaitableDoc(AsyncBase):
 
 
 async def test_async_predicate_is_awaitable():
-    """`await instance.publish()` returns the boolean predicate result so
-    async callsites stay symmetric with the sync version."""
+    """`await instance.publish()` returns the predicate result so async
+    callsites stay symmetric with the sync `instance.publish()` form."""
     doc = AwaitableDoc()
     assert await doc.publish() is False  # current state is "draft", not "published"
     await doc.publish.aset()
@@ -361,9 +357,10 @@ async def test_async_predicate_is_awaitable():
 
 
 async def test_async_condition_returning_task_is_awaited():
-    """Regression: a sync condition that returns a `Task` (or any non-coroutine
-    awaitable) used to be treated as truthy via object truth, silently passing
-    the check. After the fix it is awaited like a coroutine."""
+    """A sync condition returning a `Task` (or any non-coroutine
+    awaitable) is awaited like a coroutine — the object-truth shortcut
+    would silently pass these as truthy, which is the wrong answer when
+    the underlying value is meant to gate the transition."""
     import asyncio
 
     async def _async_helper():
@@ -381,9 +378,7 @@ async def test_async_condition_returning_task_is_awaited():
             self.state = "draft"
             super().__init__(*a, **kw)
 
-        @async_transition(
-            source="draft", target="published", conditions=[returns_task]
-        )
+        @async_transition(source="draft", target="published", conditions=[returns_task])
         async def publish(self):
             pass
 

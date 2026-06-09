@@ -151,12 +151,12 @@ class TestAltSyntaxBlogPost:
             )
 
 
-# Regression: previously `can_proceed()` for a class-based transition reduced
-# to "any sub passes perms AND any sub passes conds" — independently. Two
-# sub-handlers where one satisfies perms-but-not-conds and the other
-# conds-but-not-perms would make `can_proceed → True` while `set() → raise`
-# because no *single* sub satisfies both. The fix requires exactly one
-# sub-handler to pass both checks (matching the dispatch in to_next_state).
+# `can_proceed()` must mirror what `set()` would actually do: a class-
+# grouped transition only fires when *one* sub-handler satisfies both
+# permissions and conditions. A bare "any-perms ∧ any-conds" check
+# over-approximates when one sub passes perms-but-not-conds and another
+# passes conds-but-not-perms, so the predicate would say True while
+# `set()` raises. The scenario below pins that mismatch.
 class _SplitChecks:
     @transition(source="new")
     def perms_only_handler(self, instance):
@@ -175,8 +175,9 @@ def _falsy(*_a, **_k):
     return False
 
 
-# Inject the split perms/conds directly onto each sub-handler's meta so we
-# can exercise the (old-bug) scenario without rewriting the decorator API.
+# Inject split perms/conds straight onto each sub-handler's meta — that's
+# the simplest way to exercise the disjoint-pass-sets scenario without
+# adding decorator surface area.
 # Access via __dict__ to bypass FsmTransition.__get__ (which would try to
 # resolve a SqlAlchemyHandle on the non-mapped handler class).
 _SplitChecks.__dict__["perms_only_handler"].meta.permissions = (_truthy,)
@@ -199,20 +200,15 @@ class SplitChecksModel(Base):
 
 
 def test_can_proceed_mirrors_set_for_class_transitions():
-    """The bug: any-perms + any-conds returned True even when no single
-    sub-handler satisfied both, so `set()` then raised. Fixed by requiring
-    exactly one sub-handler to pass both checks."""
+    """`can_proceed()` agrees with `set()` when no single sub-handler
+    satisfies both permissions and conditions."""
     m = SplitChecksModel()
-    # No sub-handler satisfies BOTH permissions and conditions:
-    #   perms_only: perms ✓, conds ✗
-    #   conds_only: perms ✗, conds ✓
-    # so `set()` must raise, and `can_proceed()` must agree.
+    # perms_only: perms ✓, conds ✗
+    # conds_only: perms ✗, conds ✓
     assert m.publish.can_proceed() is False
-    # Source state matches both subs; neither sub satisfies perms+conds
-    # together → PreconditionError with a per-sub breakdown (was
-    # InvalidSourceStateError before the error-attribution fix). The
-    # breakdown should name each sub-handler by its method name so the
-    # user can see which one failed which check.
+    # The source state matches both subs but neither passes both checks,
+    # so we expect PreconditionError (not InvalidSourceStateError) with
+    # a per-sub-handler breakdown naming each method.
     with pytest.raises(PreconditionError) as info:
         m.publish.set()
     msg = str(info.value)

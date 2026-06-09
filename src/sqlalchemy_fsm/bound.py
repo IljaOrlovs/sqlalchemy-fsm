@@ -18,17 +18,16 @@ from .sqltypes import FSMField
 def fsm_columns_cache(table_class: type) -> tuple[Any, ...]:
     """All FSMField-typed columns on `table_class`, in column declaration order."""
     return tuple(
-        col
-        for col in sqla_inspect(table_class).columns
-        if isinstance(col.type, FSMField)
+        col for col in sqla_inspect(table_class).columns if isinstance(col.type, FSMField)
     )
 
 
 def single_fsm_column(table_class: type) -> Any:
     """Return the model's sole FSMField column. Raises if 0 or >1.
 
-    Used by the legacy bare-`@transition(...)` path; multi-column models
-    must use `FSMColumn.transition(...)` so the binding is explicit.
+    The module-level `@transition(...)` form has no column reference and
+    resolves through here. Models with more than one FSMField column must
+    bind each transition explicitly via `FSMColumn.transition(...)`.
     """
     cols = fsm_columns_cache.get_value(table_class)
     if len(cols) == 0:
@@ -45,11 +44,11 @@ def single_fsm_column(table_class: type) -> Any:
 def resolve_handle(
     table_class: type, record: Any, column_ref: Any | None
 ) -> "SqlAlchemyHandle":
-    """Build the handle for a transition.
+    """Build the handle a transition will dispatch through.
 
-    `column_ref` is the `FSMColumn` instance the transition was declared
-    on. When `None` (legacy module-level `@transition`), fall back to the
-    single-column rule.
+    `column_ref` is the `FSMColumn` the transition was declared on. When
+    it's `None` — the module-level `@transition(...)` form — we fall
+    back to the model's sole FSM column.
     """
     if column_ref is None:
         column_ref = single_fsm_column(table_class)
@@ -75,18 +74,16 @@ class SqlAlchemyHandle:
 
 # --- callable-signature memoization ----------------------------------------
 #
-# `inspect.getcallargs` was previously called on the hot path for every
-# condition/permission/handler check. Building the Signature dominates the
-# benchmark. We cache the Signature per-callable and use `.bind()` instead.
-
-# WeakKeyDictionary so transient lambdas (common as inline conditions) don't
-# pin themselves alive for the process lifetime. Built-ins and other objects
-# that can't be weakref'd fall back to a small bounded LRU.
+# Conditions, permissions, and handlers are arg-checked on every transition.
+# Building `inspect.Signature` dominates the benchmark, so we cache it per
+# callable. A WeakKeyDictionary keeps inline lambdas from pinning themselves
+# alive for the process lifetime; built-ins and other non-weakref-able
+# callables fall back to a small bounded LRU keyed by `id()`.
 _SigCache = "weakref.WeakKeyDictionary[Callable[..., Any], py_inspect.Signature | None]"
 _SIGNATURE_CACHE: _SigCache = weakref.WeakKeyDictionary()  # type: ignore[assignment]
 # Bounded LRU keyed by `id(fn)` for callables that can't be weakref'd
-# (e.g. built-ins). Wholesale clear() would lose entries belonging to other
-# callsites; LRU eviction keeps the hot set warm.
+# (e.g. built-ins). LRU eviction so a burst of one-off callables can't
+# wipe entries still hot at another call site.
 _SIGNATURE_FALLBACK: OrderedDict[int, py_inspect.Signature | None] = OrderedDict()
 _SIGNATURE_FALLBACK_MAX = 256
 
@@ -130,8 +127,9 @@ def _signature_for(fn: Callable[..., Any]) -> py_inspect.Signature | None:
     try:
         _SIGNATURE_CACHE[fn] = sig
     except TypeError:
-        # Race: fn is weakref-able on getitem path but not setitem. Cache
-        # in the fallback instead.
+        # Reachable when an object is weakref-able on lookup but not on
+        # assignment (rare; some C extensions). Fall back to the id-keyed
+        # cache so the work isn't wasted.
         _fallback_put(id(fn), sig)
     return sig
 
@@ -548,9 +546,7 @@ def _sub_label(sub: "BoundFSMBase") -> str:
     """
     fn = getattr(sub, "set_func", None)
     if fn is not None:
-        name = getattr(fn, "__name__", None) or getattr(
-            type(fn), "__name__", None
-        )
+        name = getattr(fn, "__name__", None) or getattr(type(fn), "__name__", None)
         if name:
             return name
     return type(sub).__name__
@@ -642,9 +638,7 @@ class BoundFSMClass(BoundFSMBase):
     def to_next_state(self, args: Iterable[Any], kwargs: Mapping[str, Any]) -> None:
         accepted = self._accepted_subs(args, kwargs)
         if len(accepted) > 1:
-            raise exc.SetupError(
-                f"Can transition with multiple handlers ({accepted})"
-            )
+            raise exc.SetupError(f"Can transition with multiple handlers ({accepted})")
         if not accepted:
             self._raise_no_accepted_sub(args, kwargs)
         return accepted[0].to_next_state(args, kwargs)
@@ -749,9 +743,7 @@ class AsyncBoundFSMClass(BoundFSMClass):
     ) -> None:
         accepted = await self._aaccepted_subs(args, kwargs)
         if len(accepted) > 1:
-            raise exc.SetupError(
-                f"Can transition with multiple handlers ({accepted})"
-            )
+            raise exc.SetupError(f"Can transition with multiple handlers ({accepted})")
         if not accepted:
             await self._araise_no_accepted_sub(args, kwargs)
         return await accepted[0].ato_next_state(args, kwargs)
@@ -772,9 +764,7 @@ class AsyncBoundFSMClass(BoundFSMClass):
         for sub in applicable:
             perm = await sub.apermissions_met(args, kwargs)
             cond = await sub.aconditions_met(args, kwargs)
-            parts.append(
-                f"{_sub_label(sub)}(permissions={perm}, conditions={cond})"
-            )
+            parts.append(f"{_sub_label(sub)}(permissions={perm}, conditions={cond})")
         raise exc.PreconditionError(
             "no sub-handler satisfies both permissions and conditions "
             f"for current state {self.current_state!r}: {'; '.join(parts)}",

@@ -1,17 +1,10 @@
-"""Regression tests for descriptor-level edge cases.
+"""Descriptor-level contracts that are easy to break in a refactor.
 
-Covers two narrow but easily-broken paths:
-
-1. SA 2.x ``select(Model.transition)`` — the hybrid descriptor protocol
-   exposes the class-bound handle via ``__get__(None, owner)`` even when
-   reached through ``select()``. The descriptor must still produce a
-   usable SQL expression (via the no-arg ``__call__``) so ``where()`` /
-   ``filter_by()`` keep working.
-
-2. Detached / cross-session ``set()`` — the library never validates the
-   session attachment state of the row; documenting the contract here
-   so the behaviour is fixed (in-memory mutation works, persistence is
-   the caller's job) and a regression elsewhere would be caught.
+Pins behaviour at the seams between the FSM descriptor and SQLAlchemy's
+ORM that the rest of the suite doesn't explicitly exercise: the SA 2.x
+``select(...)`` path, transition mutation on detached / cross-session
+instances, mapped classes with custom ``__bool__``, and the structured
+fields surfaced on FSM exceptions.
 """
 
 import pytest
@@ -46,8 +39,8 @@ def test_select_with_class_bound_transition_filter():
 
     The hybrid descriptor's class-side ``__get__`` produces a
     ``ClassBoundFsmTransition`` whose ``__call__`` returns a SA filter
-    expression. We want to make sure that path is still wired through
-    SA 2.x's ``select()`` API, not just legacy ``query.filter``.
+    expression. Pin that this path works under SA 2.x's ``select(...)``
+    in addition to the historical ``query.filter(...)`` form.
     """
     session = SessionGen()
     try:
@@ -57,15 +50,11 @@ def test_select_with_class_bound_transition_filter():
         session.commit()
         ids = [a.id, b.id]
 
-        stmt = sqlalchemy.select(Article).where(
-            Article.publish(), Article.id.in_(ids)
-        )
+        stmt = sqlalchemy.select(Article).where(Article.publish(), Article.id.in_(ids))
         rows = session.execute(stmt).scalars().all()
         assert rows == [b]
 
-        neg = sqlalchemy.select(Article).where(
-            ~Article.publish(), Article.id.in_(ids)
-        )
+        neg = sqlalchemy.select(Article).where(~Article.publish(), Article.id.in_(ids))
         rows = session.execute(neg).scalars().all()
         assert rows == [a]
     finally:
@@ -73,11 +62,11 @@ def test_select_with_class_bound_transition_filter():
 
 
 def test_set_after_expunge_mutates_in_memory():
-    """``instance.publish.set()`` on a detached row mutates the attribute.
+    """``instance.publish.set()`` on a detached row updates the attribute.
 
-    Persistence is the caller's responsibility. We don't promise anything
-    beyond "the column attribute is updated" — but that contract must
-    hold even after the row is detached from its session.
+    The library promises in-memory mutation, nothing more — persistence
+    is the caller's. That contract holds whether or not the row is
+    currently attached to a session.
     """
     session = sqlalchemy.orm.sessionmaker(bind=engine, expire_on_commit=False)()
     try:
@@ -103,10 +92,10 @@ class Falsy(Base):
         super().__init__(*args, **kwargs)
 
     def __bool__(self) -> bool:
-        # Simulate a value-object-style mapped class whose truthiness
-        # depends on domain state, not session attachment. Pre-fix,
-        # `SqlAlchemyHandle.__post_init__` skipped dispatcher creation
-        # whenever __bool__ was False, breaking `set()` downstream.
+        # Value-object-style mapped class whose truthiness depends on
+        # domain state rather than session attachment. The FSM dispatcher
+        # must use `is not None`, not truthiness, when deciding whether
+        # to wire up event dispatch.
         return False
 
     @transition(source="draft", target="published")
@@ -115,7 +104,7 @@ class Falsy(Base):
 
 
 def test_set_works_on_mapped_instance_overriding_bool():
-    """Regression: mapped class with `__bool__ → False` must still transition."""
+    """A mapped class with `__bool__ → False` still transitions."""
     f = Falsy()
     assert not bool(f)
     f.publish.set()
@@ -142,9 +131,9 @@ def test_exception_carries_structured_fields():
 def test_set_works_across_sessions():
     """A row moved between sessions can still transition.
 
-    The transition machinery operates on Python attributes; it doesn't
-    consult the row's ``InstanceState`` for session membership. Verify
-    that explicitly so anyone refactoring the dispatch stays honest.
+    The transition machinery operates on Python attributes only — it
+    doesn't consult the row's ``InstanceState`` for session membership —
+    so re-attaching to a different session is fine.
     """
     mk = sqlalchemy.orm.sessionmaker(bind=engine, expire_on_commit=False)
     s1 = mk()

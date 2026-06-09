@@ -205,6 +205,7 @@ def attach_fsm_constraints(source: Any) -> list[CheckConstraint]:
 
 # --- alembic autogenerate comparator ---------------------------------------
 
+
 def compare_fsm_check(
     autogen_context: Any,
     modify_table_ops: Any,
@@ -331,9 +332,9 @@ def _resolve_dialect(autogen_context: Any, insp: Any) -> Any:
 def _render_sqltext(sqltext: Any, dialect: Any) -> str:
     """Compile a CHECK body to dialect-specific SQL with literals inlined.
 
-    Falls back to ``str()`` if the value isn't a SA expression (legacy
-    callers that built CHECKs from raw strings) — those stay subject to
-    whatever escaping they applied themselves.
+    Falls back to ``str()`` if the value isn't a SA expression — e.g.
+    a raw-string CHECK body the caller built themselves. Those skip the
+    compiler and stay subject to whatever escaping the caller applied.
     """
     compile_fn = getattr(sqltext, "compile", None)
     if compile_fn is None:

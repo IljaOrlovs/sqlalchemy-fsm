@@ -70,8 +70,9 @@ For a transition decorated as `BlogPost.publish`:
 
 `set()` mutates the field in memory; commit the session yourself to persist.
 
-> Note: `target=None` is not supported — every transition must declare an
-> explicit target state.
+Top-level `@transition` must declare an explicit `target=` state.
+Sub-handlers inside a class-grouped transition may omit `target=` to
+inherit it from the enclosing class.
 
 ## Conditions
 
@@ -226,10 +227,11 @@ gate.
 
 ## Async (SQLAlchemy 2.x `AsyncSession`)
 
-`@transition` mutates an attribute on a mapped instance — it does not
-touch the session — so transitions work transparently under
-`AsyncSession`. Call `.set()` like you would synchronously; `await` the
-session commit yourself.
+Two modes, used together or separately:
+
+**Sync `@transition` under `AsyncSession`.** A sync transition mutates an
+attribute — it does not touch the session — so it works unchanged under
+an async engine. Call `.set()` as usual; await the commit yourself.
 
 ```python
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -243,14 +245,40 @@ async with AsyncSession(engine) as session:
     await session.commit()      # async persistence
 ```
 
-The class-bound query helper (`AsyncDoc.publish()`) is a plain SA
-expression, so it composes with `select(...).filter(...)` against an
-`AsyncSession` exactly as in the sync API. Events
-(`before_state_change` / `after_state_change`) fire normally.
+**`@async_transition` for awaiting inside the handler.** Use it when the
+handler, a condition, or a permission needs to `await` something. The
+descriptor exposes `aset(...)` and `acan_proceed(...)`, and the
+predicate `instance.<name>()` is also a coroutine, so the async surface
+mirrors the sync one:
 
-Async `conditions` / `permissions` callables (coroutines) are **not
-currently supported** — `set()` is synchronous, so the callables must
-return a value rather than an awaitable.
+```python
+from sqlalchemy_fsm import async_transition
+
+async def is_editor(instance, user=None, **_):
+    return await user.has_role("editor")
+
+class AsyncDoc(Base):
+    ...
+    @async_transition(source="draft", target="published",
+                      permissions=[is_editor])
+    async def publish(self, user=None):
+        await notify_subscribers(self)
+
+await doc.publish.acan_proceed(user=u)   # bool
+await doc.publish.aset(user=u)           # executes
+await doc.publish()                      # bool: is the row in 'published'?
+```
+
+Sync callables stay valid inside `@async_transition` — anything
+awaitable (coroutine, Task, Future) is resolved, anything else is taken
+as a value. Mixing sync and async **sub-handlers** under one
+class-grouped transition is rejected at decoration time.
+
+The class-bound query helper (`AsyncDoc.publish()` at the class level)
+is a plain SA expression and composes with
+`select(...).where(...)` against an `AsyncSession` identically to the
+sync case. Events (`before_state_change` / `after_state_change`) fire
+normally; their listeners must still be sync (see Events above).
 
 ## Alembic integration
 
@@ -332,5 +360,13 @@ OIDC trusted publishing. A GitHub Release is created with notes from
 
 ## How does this differ from django-fsm?
 
-- Cannot commit data from inside a transition handler.
-- Condition callables accept arguments forwarded from `set()`.
+- The transition handler does not own the database transaction — the
+  caller commits the session after `set()` returns. No implicit
+  `transaction.atomic` wrapping.
+- Conditions and permissions receive the same `*args` / `**kwargs` you
+  pass to `set()` / `can_proceed()` (after the instance), so you can
+  thread caller-supplied context like `user=` through every check.
+- States can be declared up-front as a closed set
+  (`FSMField["a","b","c"]`) and the transition graph is validated at
+  SA mapper-configuration time. Alembic autogenerate can emit and
+  diff a matching CHECK constraint.

@@ -38,9 +38,7 @@ def normalize_subscript_states(cls_name: str, item: object) -> tuple[str, ...]:
     elif isinstance(item, tuple):
         states = item  # type: ignore[assignment]
     else:
-        raise TypeError(
-            f"{cls_name}[...] expects strings; got {type(item).__name__}"
-        )
+        raise TypeError(f"{cls_name}[...] expects strings; got {type(item).__name__}")
 
     bad = [s for s in states if not isinstance(s, str)]
     if bad:
@@ -60,11 +58,10 @@ def get_or_build_subscript_subclass(
 ) -> _C:
     """Memoised `Parent[...]` factory shared by `FSMField` and `FSMColumn`.
 
-    The two subscript paths previously inlined the same cache-lookup +
-    ``type(...)`` construction; this consolidates them so the cache key
-    shape and class-name format only live in one place. `extra_attrs`
-    lets each parent inject its own class-body extras (e.g. SA's
-    ``inherit_cache``).
+    Returns the subclass cached under the normalised state-tuple key,
+    building it on first lookup. `extra_attrs` is merged into the
+    synthesized class body so each parent can inject what only applies
+    to it (e.g. SA's `inherit_cache` for column types).
     """
     key = normalize_subscript_states(label, item)
     cached = cache.get(key)

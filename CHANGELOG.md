@@ -8,125 +8,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Breaking changes
-- `InvalidSourceStateError` no longer inherits from `NotImplementedError`. It
-  inherits from `FSMException` only. Catch sites using
-  `except NotImplementedError` to mean "invalid source state" must switch to
-  `except InvalidSourceStateError` (or `FSMException`).
-- Removed undocumented back-compat shims: `bound.column_cache`,
+- `InvalidSourceStateError` no longer inherits from `NotImplementedError`.
+  Catch with `InvalidSourceStateError` or `FSMException`.
+- `events.BoundFSMDispatcher` exposes only `before_state_change` and
+  `after_state_change`. Any other attribute now raises `AttributeError`
+  instead of silently producing a `partial` for an SA `InstanceEvents`
+  handle.
+- Removed undocumented helpers from `bound`: `column_cache`,
   `BoundFSMFunction.get_call_iface_error()`, and
-  `AsyncBoundFSMFunction.transition_possible_async()`. Use
+  `AsyncBoundFSMFunction.transition_possible_async()`. Replace with
   `bound.single_fsm_column()`, the module-level `_call_iface_error`,
-  and `transition_possible()` respectively.
-- Removed `transition.sql_equality_cache` (tuple-keyed shim). Use
-  `transition.sql_equality_for(column, target)` instead — same semantics.
-- `events.BoundFSMDispatcher` only exposes `before_state_change` /
-  `after_state_change`. Previously its `__getattr__` would silently
-  return a `partial` for any SA `InstanceEvents` attribute; that
-  surface is now closed.
+  and `transition_possible()`.
+- Removed `transition.sql_equality_cache` (tuple-keyed shim).
+  Replace `sql_equality_cache.get_value((col, target))` with
+  `sql_equality_for(col, target)`.
 
-### Added (cont.)
-- `InvalidSourceStateError`, `PreconditionError`, and `PermissionDeniedError`
-  now expose `.current_state`, `.target_state`, and `.transition_name`
-  attributes, so callers can branch on the failure without parsing the
-  error message.
-- Async transitions: `await instance.<name>()` now returns the boolean
-  predicate (was previously sync — `await` raised `TypeError`).
-  `instance.<name>.aset(...)` and `instance.<name>.acan_proceed(...)`
-  are unchanged.
-- `FSMField["a","bb","ccc"]` now derives `length=` from the longest
-  declared state (overridable via explicit `length=` kwarg). The plain
-  unsubscripted `FSMField` remains unbounded.
+### Added
+- `permissions=[...]` kwarg on `@transition` and `@async_transition`
+  for RBAC checks, separate from `conditions`. Permissions run after
+  the source-state check and before conditions; a failing permission
+  raises `PermissionDeniedError`. Each callable receives the instance
+  plus any `*args` / `**kwargs` forwarded from `set()` / `can_proceed()`.
+- `@async_transition` decorator for handlers that need to `await`. The
+  descriptor exposes `aset(...)` / `acan_proceed(...)` and an awaitable
+  predicate (`await instance.<name>()`). Awaitable conditions and
+  permissions are resolved with `inspect.isawaitable`, so Tasks and
+  Futures work, not only bare coroutines.
+- `InvalidSourceStateError`, `PreconditionError`, and
+  `PermissionDeniedError` carry `.current_state`, `.target_state`, and
+  `.transition_name` attributes, so callers can branch on the failure
+  without parsing the message.
+- `FSMField["a","b","c"]` subscript declares a closed set of legal
+  states. With the typed form the package validates the transition
+  graph at SA `mapper_configured` time (correctness, completeness,
+  reachability from the column's `default=`) and `validate_fsm(Model)`
+  is exposed for explicit invocation. The subscripted form also derives
+  `length=` from the longest declared state (override via explicit
+  `length=`). Bare `FSMField` skips validation and is unbounded.
+- `FSMColumn` — `sa.Column` subclass that doubles as a per-column
+  `@transition` namespace, so models with more than one FSM column can
+  bind each transition explicitly.
+- `FSMCondition` Protocol exported from the package root; the
+  `conditions=` / `permissions=` kwargs use it so pyright flags
+  non-callable arguments at decoration sites.
+- `sqlalchemy_fsm.extras.alembic` — emit a CHECK constraint for the
+  legal state set and hook Alembic autogenerate to detect drift.
+  `attach_fsm_constraints(Base)` accepts a declarative base, a
+  `registry`, or an iterable of mapped classes;
+  `register_autogenerate_comparator()` wires up the comparator.
+  Optional install: `pip install sqlalchemy-fsm[alembic]`.
+- `sqlalchemy_fsm.extras.graph` — render the transition graph as
+  Mermaid / Graphviz DOT / PlantUML source via `to_mermaid()`,
+  `to_dot()`, `to_plantuml()`. Class-grouped transitions are flattened
+  to match runtime dispatch.
+- `cache.weak_key_cache` helper backing the class- and column-keyed
+  caches.
+
+### Changed
+- Class-grouped transitions now distinguish "the current state matches
+  no sub-handler's source set" (still `InvalidSourceStateError`) from
+  "the source state matches, but no single sub-handler satisfies both
+  permissions and conditions" (now `PreconditionError` with a per-sub
+  breakdown naming each handler).
+- `@transition` accepts any callable, not just `inspect.isfunction` —
+  `functools.partial`, callable class instances, and other callables
+  are valid handlers.
+- `TransitionStateArithmetics.source_intersection()` returns
+  `frozenset | None`; the `False` sentinel that shared truthiness with
+  the empty frozenset is gone.
+- `_SIGNATURE_FALLBACK` evicts in LRU order. A burst of one-off
+  callables no longer wipes signatures still hot at another callsite.
+- Class- and column-keyed caches are now weak-keyed, so dynamically
+  built mapped classes (test factories, parametrised fixtures) aren't
+  pinned for the process lifetime.
 
 ### Fixed
-- `SqlAlchemyHandle.__post_init__` no longer skips dispatcher creation
-  when the mapped instance overrides `__bool__` to return falsy
-  (`if self.record is not None:` instead of truthiness).
-- Async condition / permission / handler evaluation awaits any
-  `inspect.isawaitable` value (Task, Future, custom awaitables), not
-  only bare coroutines. Previously a sync callable returning a `Task`
-  was treated as truthy via object identity and silently passed.
-- Class-grouped transitions now distinguish "no sub-handler's source
-  set matches the current state" (`InvalidSourceStateError`) from
-  "source state matches, but no single sub satisfies both permissions
-  and conditions" (`PreconditionError` with a per-sub breakdown).
-- `_make_transition` accepts any callable, not only `inspect.isfunction`
-  — `functools.partial`, callable class instances, and other callables
-  used to fall into the "Do not know how to" path.
-- `is_valid_source_state` now gates the `"*"` comparison on
-  `isinstance(value, str)` so a malicious `__eq__` can't sneak a
-  non-string wildcard through validation.
-
-### Fixed (continued)
-- Alembic CHECK constraint now goes through SA's expression compiler
-  rather than f-string interpolation. State strings containing
-  single quotes (`O'Brien`) are escaped correctly, and column names
-  that are SQL reserved words (`order`, `from`) are quoted per the
-  active dialect at DDL emission time — preventing both broken DDL
-  and spurious autogen drift on Postgres/MySQL.
-- Alembic autogenerate now warns once per dialect when
+- `SqlAlchemyHandle` builds the event dispatcher whenever a record is
+  attached, not only when it's truthy. Mapped classes overriding
+  `__bool__` to return falsy now transition correctly.
+- The Alembic CHECK goes through SA's expression compiler instead of
+  f-string interpolation. States containing `'` (e.g. `O'Brien`) are
+  escaped per the SQL standard, and reserved-word column names
+  (`order`, `from`) are quoted per the active dialect — preventing
+  both invalid DDL and spurious autogen drift on Postgres/MySQL.
+- Alembic autogenerate emits a one-shot per-dialect warning when
   `get_check_constraints()` raises `NotImplementedError`, instead of
-  silently disabling drift detection on backends that don't reflect
-  CHECK constraints.
-- `TransitionStateArithmetics.source_intersection()` returns
-  `frozenset | None` (was `frozenset | bool`). The `False` sentinel
-  shared truthiness with the empty frozenset and was fragile against
-  refactors.
-- `BoundFSMFunction._validate_handler_iface` no longer emits a
-  redundant `warnings.warn` before raising `SetupError`; the
-  diagnostic is folded into the error message.
-- `_SIGNATURE_FALLBACK` now evicts in LRU order rather than wiping
-  the entire cache on overflow.
-- `ClassBoundFsmTransition.__call__` now raises `SetupError` with a
-  clear message when invoked on the synthetic dispatcher class
-  produced by class-based transition introspection (previously
-  surfaced as a bare `AttributeError`).
-- `fsm_columns_cache` and the per-column equality cache are now
-  weak-keyed, so dynamically created model classes (test factories,
-  parametrised fixtures) are no longer pinned for the process
-  lifetime.
-
-### Added
-- `FSMCondition` Protocol exported from the package root; the
-  `conditions=` / `permissions=` kwargs are typed against it so
-  pyright catches non-callable mistakes at decoration sites.
-- `cache.weak_key_cache` helper.
-
-### Added
-- `permissions=[...]` kwarg on `@transition` for RBAC checks, separate from
-  `conditions`. Each callable receives `(instance, *args, **kwargs)` forwarded
-  from `set()` / `can_proceed()`. A failing permission raises
-  `PermissionDeniedError`; checks run after source-state and before conditions.
-- `PermissionDeniedError` (in `sqlalchemy_fsm.exc`).
-- `sqlalchemy_fsm.extras.graph` — render a model's transition graph as
-  Mermaid / Graphviz DOT / PlantUML source via `to_mermaid()`, `to_dot()`,
-  `to_plantuml()`. Class-grouped transitions are flattened to match
-  runtime dispatch.
-- `AsyncSession` support is now verified end-to-end (events, conditions,
-  permissions, class-bound query helpers) via `tests/test_async.py`.
-  No runtime change — `@transition` was already async-safe — but the
-  README now documents the supported usage.
-
-- `sqlalchemy_fsm.extras.alembic` — render and autogenerate `CHECK` constraints
-  for FSM-managed columns. `attach_fsm_constraints(Base)` accepts a declarative
-  base, a `registry`, or an iterable of mapped classes; `register_autogenerate_comparator()`
-  hooks Alembic's autogenerate to emit drop/add ops when the legal state set
-  changes. Available as an optional install: `pip install sqlalchemy-fsm[alembic]`.
-
-- `FSMField["a", "b", "c"]` subscript syntax declares a closed set of legal
-  states. When present, the package validates the model's transition graph
-  at SA `mapper_configured` time and raises `SetupError` on:
-  - unknown state (transition references a state not in the declared set),
-  - incomplete coverage (declared state never referenced),
-  - or an unreachable state (no forward path from the column's `default=`).
-  Wildcards (`source="*"`) count as edges from every declared state.
-  Plain `FSMField` (no subscript) remains supported and skips validation.
-  `validate_fsm(Model)` is also exposed for explicit invocation.
+  silently skipping drift detection.
+- `is_valid_source_state` gates the `"*"` check on
+  `isinstance(value, str)`, so a non-string object whose `__eq__`
+  happens to match `"*"` can't sneak through validation.
+- `ClassBoundFsmTransition.__call__` raises `SetupError` with a clear
+  message when invoked on the synthetic dispatcher subclass produced
+  during class-based transition introspection. (It used to fall
+  through to a bare `AttributeError`.)
+- `BoundFSMFunction._validate_handler_iface` no longer emits a stray
+  `warnings.warn` before raising `SetupError`; the diagnostic is in
+  the error message.
 
 ### Internal
-- Dev deps gain `pytest-asyncio`, `aiosqlite`, `greenlet`, and `alembic` for
-  async + Alembic integration tests.
-- New `sqlalchemy_fsm.introspection` module factors out the transition-graph
-  walk shared by the validator and the optional extras.
+- New `sqlalchemy_fsm.introspection` module factors out the
+  transition-graph walk shared by the validator and the extras.
+- Dev deps add `pytest-asyncio`, `aiosqlite`, `greenlet`, `alembic`,
+  and `hypothesis`.
 
 ## [2.2.0] - 2026-06-08
 

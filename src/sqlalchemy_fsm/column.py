@@ -46,8 +46,8 @@ class FSMColumn(sa.Column):
     (validation, alembic CHECKs, query filtering) keeps working.
 
     The plain `FSMColumn(...)` form (no subscript) builds a column whose
-    type is the bare `FSMField` — no state validation, just like the
-    legacy `sa.Column(FSMField, ...)` form.
+    type is the bare `FSMField` — no state validation, matching the
+    equivalent `sa.Column(FSMField, ...)` declaration.
     """
 
     _allowed_states: ClassVar[frozenset[str] | None] = None

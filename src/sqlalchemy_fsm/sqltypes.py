@@ -44,11 +44,7 @@ class FSMField(types.String):
     _subscript_cache: ClassVar[dict[tuple[str, ...], type[FSMField]]] = {}
 
     def __init__(self, *args: object, **kwargs: object) -> None:
-        if (
-            self._allowed_states is not None
-            and "length" not in kwargs
-            and not args
-        ):
+        if self._allowed_states is not None and "length" not in kwargs and not args:
             kwargs["length"] = max(len(s) for s in self._allowed_states)
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
 

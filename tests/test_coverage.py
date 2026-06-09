@@ -385,15 +385,11 @@ class TestFSMMetaInvalidTarget:
 class TestFSMMetaIsAsyncInvariant:
     def test_mismatched_is_async_rejected(self):
         with pytest.raises(ValueError, match="is_async"):
-            FSMMeta(
-                "*", "done", (), (), _bound.BoundFSMFunction, is_async=True
-            )
+            FSMMeta("*", "done", (), (), _bound.BoundFSMFunction, is_async=True)
 
     def test_async_bound_with_sync_flag_rejected(self):
         with pytest.raises(ValueError, match="is_async"):
-            FSMMeta(
-                "*", "done", (), (), _bound.AsyncBoundFSMFunction, is_async=False
-            )
+            FSMMeta("*", "done", (), (), _bound.AsyncBoundFSMFunction, is_async=False)
 
 
 # --- sqltypes: non-string list rejected ----------------------------------
@@ -751,8 +747,7 @@ class TestAlembicComparator:
             )
         assert ops.ops == []
         assert any(
-            "does not implement get_check_constraints" in str(w.message)
-            for w in caught
+            "does not implement get_check_constraints" in str(w.message) for w in caught
         )
 
     def test_noop_when_neither_side_has_check(self):

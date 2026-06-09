@@ -98,11 +98,11 @@ class TestRenderCheckConstraint:
         assert "'published'" in sql
 
     def test_state_with_single_quote_is_escaped(self):
-        """Regression: a state containing ``'`` must be SQL-escaped, not
-        spliced raw. Pre-fix, ``_check_sql`` f-stringed the value and
-        produced syntactically broken CHECK SQL (and was technically an
-        injection vector for any caller that ever sourced state names
-        from outside the codebase)."""
+        """A state containing ``'`` must be SQL-escaped, not spliced raw —
+        otherwise the CHECK is syntactically broken (and would be an
+        injection vector for any caller sourcing state names from outside
+        the codebase). SA's compiler doubles single quotes per the SQL
+        standard."""
         Base = declarative_base()
 
         class M(Base):
@@ -121,20 +121,19 @@ class TestRenderCheckConstraint:
         assert "'d''arcy'" in sql
 
     def test_reserved_word_column_name_is_quoted_per_dialect(self):
-        """Regression: a column whose name collides with a SQL reserved
-        word must be quoted in the CHECK body so the constraint is valid
-        on dialects that care (Postgres). Pre-fix, ``_check_sql`` bare-
-        substituted the name, and autogen would see permanent drift
-        because the DB reflected the quoted form."""
+        """A column whose name collides with a SQL reserved word must be
+        quoted in the CHECK body, or the constraint is invalid on dialects
+        that care (Postgres). The CHECK is built from a SA expression
+        rather than a string, so the compiler applies dialect-specific
+        identifier quoting at DDL emission time and autogen sees a stable
+        rendering on both sides."""
         Base = declarative_base()
 
         class M(Base):
             __tablename__ = "reserved_word_col"
             id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
             # `order` is reserved on every major dialect.
-            order = sqlalchemy.Column(
-                FSMField, nullable=False, name="order"
-            )
+            order = sqlalchemy.Column(FSMField, nullable=False, name="order")
 
             @transition(source="open", target="closed")
             def close(self):

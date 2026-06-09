@@ -48,12 +48,12 @@ def iter_transitions(
     so overrides win and each name appears at most once.
 
     If `column` is given, only return transitions bound to that column
-    (`column_ref is column`). Transitions with no `column_ref` (legacy
-    `@transition(...)`) are returned for every `column` query — that's
-    correct for single-column models (the only place legacy `@transition`
-    is valid) and `validate_fsm` separately rejects mixing legacy
-    transitions with multi-column models, so the over-attribution can
-    never produce a confusing report.
+    (`column_ref is column`). Transitions decorated with the bare
+    `@transition(...)` have no `column_ref` and are returned for every
+    `column` query: that's correct on single-column models (the only place
+    the bare form is valid), and `validate_fsm` rejects bare transitions
+    on multi-column models up front, so the over-attribution never reaches
+    a user-visible report.
     """
     out: list[tuple[str, FsmTransition]] = []
     for name in dir(model_cls):
@@ -61,9 +61,7 @@ def iter_transitions(
             if name in klass.__dict__:
                 attr = klass.__dict__[name]
                 if isinstance(attr, FsmTransition) and (
-                    column is None
-                    or attr.column_ref is None
-                    or attr.column_ref is column
+                    column is None or attr.column_ref is None or attr.column_ref is column
                 ):
                     out.append((name, attr))
                 break

@@ -18,9 +18,7 @@ from .conftest import Base
 class BlogPost(Base):
     __tablename__ = "blog_post_multi"
     id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
-    state = FSMColumn["draft", "published", "archived"](
-        nullable=False, default="draft"
-    )
+    state = FSMColumn["draft", "published", "archived"](nullable=False, default="draft")
     ad_mode = FSMColumn["no-ads", "inline-ads", "images", "popups"](
         nullable=False, default="popups"
     )
@@ -50,9 +48,7 @@ class TestFSMColumnBasic:
     def test_column_construction(self):
         col = BlogPost.__table__.c.state
         assert isinstance(col.type, FSMField)
-        assert col.type._allowed_states == frozenset(
-            {"draft", "published", "archived"}
-        )
+        assert col.type._allowed_states == frozenset({"draft", "published", "archived"})
 
     def test_initial_states(self):
         post = BlogPost()
@@ -158,6 +154,7 @@ class TestEagerStateValidation:
 
     def test_untyped_column_skips_validation(self):
         col = FSMColumn()  # no subscript → no allowed_states
+
         # Any state name is fine.
         @col.transition(source="anywhere", target="anywhere_else")
         def go(self):

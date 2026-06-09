@@ -67,9 +67,7 @@ def sql_equality_for(column: Any, target: str | None) -> Any:
         return expr
 
 
-def _failure_context(
-    bound_meta: Any, func: Callable[..., Any]
-) -> dict[str, Any]:
+def _failure_context(bound_meta: Any, func: Callable[..., Any]) -> dict[str, Any]:
     """Common kwargs splatted into every runtime FSM-failure exception.
 
     Centralises the four pieces of context (current/target state plus
@@ -184,9 +182,7 @@ class InstanceBoundFsmTransition(_InstanceBoundBase):
                 f"Permission denied for transition {func.__name__}.", **ctx
             )
         if not bound_meta.conditions_met(args, kwargs):
-            raise exc.PreconditionError(
-                "Preconditions are not satisfied.", **ctx
-            )
+            raise exc.PreconditionError("Preconditions are not satisfied.", **ctx)
         return bound_meta.to_next_state(args, kwargs)
 
     def can_proceed(self, *args: Any, **kwargs: Any) -> bool:
@@ -244,9 +240,7 @@ class AsyncInstanceBoundFsmTransition(_InstanceBoundBase):
                 f"Permission denied for transition {func.__name__}.", **ctx
             )
         if not await bound_meta.aconditions_met(args, kwargs):
-            raise exc.PreconditionError(
-                "Preconditions are not satisfied.", **ctx
-            )
+            raise exc.PreconditionError("Preconditions are not satisfied.", **ctx)
         return await bound_meta.ato_next_state(args, kwargs)
 
     async def acan_proceed(self, *args: Any, **kwargs: Any) -> bool:
@@ -277,8 +271,9 @@ class FsmTransition(InspectionAttrInfo):
     ) -> None:
         self.meta = meta
         self.set_fn = set_function
-        # Set by `FSMColumn.transition`; `None` for the legacy module-level
-        # `@transition`, which resolves to the model's single FSM column.
+        # Set by `FSMColumn.transition`; `None` for the bare module-level
+        # `@transition`, which resolves at call time to the model's sole
+        # FSM column.
         self.column_ref: FSMColumn | None = column_ref
 
     def __get__(
@@ -306,6 +301,7 @@ class SyncFsmTransition(FsmTransition):
     """Descriptor produced by `@transition` — typed for sync handlers."""
 
     if TYPE_CHECKING:
+
         @overload  # type: ignore[override]
         def __get__(self, instance: None, owner: Any) -> ClassBoundFsmTransition: ...
         @overload
@@ -317,6 +313,7 @@ class AsyncFsmTransition(FsmTransition):
     """Descriptor produced by `@async_transition` — typed for async handlers."""
 
     if TYPE_CHECKING:
+
         @overload  # type: ignore[override]
         def __get__(self, instance: None, owner: Any) -> ClassBoundFsmTransition: ...
         @overload

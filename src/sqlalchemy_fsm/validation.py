@@ -151,19 +151,17 @@ def validate_fsm(model_cls: type) -> None:
     columns = _fsm_columns(model_cls)
     multi = len(columns) > 1
     if multi:
-        # Legacy `@transition(...)` has no `column_ref`, so dispatch falls
-        # back to `single_fsm_column` — which raises at runtime on a
-        # multi-column model. Surface that mistake at mapper-configure
-        # time instead of waiting for the first transition call.
-        legacy = [
-            name
-            for name, t in iter_transitions(model_cls)
-            if t.column_ref is None
+        # The bare `@transition(...)` form has no column reference and
+        # dispatches through `single_fsm_column`, which can't pick a
+        # column when there are several. Reject the combination here so
+        # the error surfaces at startup instead of on the first call.
+        unbound = [
+            name for name, t in iter_transitions(model_cls) if t.column_ref is None
         ]
-        if legacy:
+        if unbound:
             raise exc.SetupError(
                 f"{model_cls.__name__} has multiple FSMField columns but "
-                f"defines bare @transition method(s) {sorted(legacy)!r}; "
+                f"defines bare @transition method(s) {sorted(unbound)!r}; "
                 f"use `FSMColumn.transition(...)` to bind each transition "
                 f"to a specific column."
             )
@@ -193,9 +191,9 @@ def _validate_fsm_column(model_cls: type, column: Column, multi: bool) -> None:
             f"declared FSMField allowed set {sorted(allowed)!r}."
         )
 
-    # Per-column transition graph. In single-column models we keep the
-    # legacy behavior of treating every `@transition` as belonging to the
-    # column; in multi-column models we filter strictly by `column_ref`.
+    # Per-column transition graph. Single-column models attribute every
+    # `@transition` to the column (the bare form has no column reference
+    # to filter on). Multi-column models filter strictly by `column_ref`.
     filter_col = column if multi else None
     used = collect_transition_states(model_cls, column=filter_col) | {start}
     edges = collect_edges(model_cls, column=filter_col)
