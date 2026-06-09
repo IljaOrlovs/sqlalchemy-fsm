@@ -327,11 +327,6 @@ print(to_plantuml(BlogPost))
 Class-grouped transitions are flattened so the rendered edges match
 runtime dispatch.
 
-## Type checking
-
-The package ships type information (PEP 561 `py.typed`). pyright / mypy
-pick up annotations automatically once installed.
-
 ## Development
 
 ```bash
