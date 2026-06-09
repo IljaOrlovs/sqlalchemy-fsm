@@ -525,6 +525,23 @@ def inherited_bound_classes(key: tuple[type, "meta.FSMMeta"]) -> type:
     return out_cls
 
 
+def _sub_label(sub: "BoundFSMBase") -> str:
+    """Best-available identifier for a sub-handler used in error messages.
+
+    Falls back to the bound-class name when there's no underlying
+    ``set_func`` (defensive — `BoundFSMBase` itself doesn't promise one,
+    but the concrete sub types do).
+    """
+    fn = getattr(sub, "set_func", None)
+    if fn is not None:
+        name = getattr(fn, "__name__", None) or getattr(
+            type(fn), "__name__", None
+        )
+        if name:
+            return name
+    return type(sub).__name__
+
+
 class BoundFSMClass(BoundFSMBase):
     """Runtime binding for a class-grouped `@transition`.
 
@@ -656,9 +673,7 @@ class BoundFSMClass(BoundFSMBase):
         for sub in applicable:
             perm = sub.permissions_met(args, kwargs)
             cond = sub.conditions_met(args, kwargs)
-            parts.append(
-                f"{sub.__class__.__name__}(permissions={perm}, conditions={cond})"
-            )
+            parts.append(f"{_sub_label(sub)}(permissions={perm}, conditions={cond})")
         return "; ".join(parts)
 
 
@@ -744,7 +759,7 @@ class AsyncBoundFSMClass(BoundFSMClass):
             perm = await sub.apermissions_met(args, kwargs)
             cond = await sub.aconditions_met(args, kwargs)
             parts.append(
-                f"{sub.__class__.__name__}(permissions={perm}, conditions={cond})"
+                f"{_sub_label(sub)}(permissions={perm}, conditions={cond})"
             )
         raise exc.PreconditionError(
             "no sub-handler satisfies both permissions and conditions "

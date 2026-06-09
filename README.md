@@ -131,8 +131,11 @@ Three properties are checked:
   edges from every declared state.)
 
 A typed `FSMField[...]` column must declare a scalar `default=<state>`
-so reachability can be evaluated. Plain `FSMField` (no subscript)
-remains supported and skips validation entirely.
+so reachability can be evaluated. If your FSM genuinely starts from
+NULL (the row is inserted with no state set, and the first transition
+assigns one), either declare a sentinel state like
+`"uninitialized"` and use it as the `default=`, or drop to the plain
+`FSMField` (no subscript), which skips validation entirely.
 
 Call `sqlalchemy_fsm.validate_fsm(MyModel)` explicitly if you want to
 run the check yourself (e.g. from a unit test).
@@ -206,6 +209,20 @@ def on_change(instance, source, target):
 ```
 
 Remove with `sqlalchemy.event.remove(...)`.
+
+**Listeners must be plain (non-async) functions.** SQLAlchemy's
+`InstanceEvents` dispatch is synchronous; an `async def` listener
+returns a coroutine that nothing awaits, so its body silently doesn't
+run. Wrap async work in `asyncio.create_task(...)` if you need it.
+
+**`before_state_change` runs before the handler and before the column
+is mutated.** Raising from it cleanly aborts the transition — state is
+unchanged. **`after_state_change` runs *after* the handler has
+returned and *after* the column has been mutated.** If an after-listener
+raises, the in-memory state has already been overwritten and won't be
+rolled back; the exception still propagates to the caller. Treat
+`after_state_change` as best-effort notification, not a transactional
+gate.
 
 ## Async (SQLAlchemy 2.x `AsyncSession`)
 

@@ -210,6 +210,11 @@ def test_can_proceed_mirrors_set_for_class_transitions():
     assert m.publish.can_proceed() is False
     # Source state matches both subs; neither sub satisfies perms+conds
     # together → PreconditionError with a per-sub breakdown (was
-    # InvalidSourceStateError before the error-attribution fix).
-    with pytest.raises(PreconditionError, match=r"permissions=.*conditions="):
+    # InvalidSourceStateError before the error-attribution fix). The
+    # breakdown should name each sub-handler by its method name so the
+    # user can see which one failed which check.
+    with pytest.raises(PreconditionError) as info:
         m.publish.set()
+    msg = str(info.value)
+    assert "perms_only_handler(permissions=True, conditions=False)" in msg
+    assert "conds_only_handler(permissions=False, conditions=True)" in msg
