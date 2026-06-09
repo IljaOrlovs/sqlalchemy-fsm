@@ -12,28 +12,21 @@ from typing import (
     ParamSpec,
     Protocol,
     TypeVar,
+    cast,
     overload,
-    runtime_checkable,
 )
 
 if TYPE_CHECKING:
     from .column import FSMColumn
 
-try:
-    # SQLAlchemy 2.0+
-    from sqlalchemy.ext.hybrid import HybridExtensionType
-
-    HYBRID_METHOD = HybridExtensionType.HYBRID_METHOD
-except ImportError:  # pragma: no cover
-    # SQLAlchemy 1.x
-    from sqlalchemy.ext.hybrid import (
-        HYBRID_METHOD,  # pyright: ignore[reportAttributeAccessIssue]
-    )
+from sqlalchemy.ext.hybrid import HybridExtensionType
 from sqlalchemy.orm.interfaces import InspectionAttrInfo
 from sqlalchemy.sql.expression import false as sql_false
 
 from . import bound, cache, exc
 from .meta import FSMMeta
+
+HYBRID_METHOD = HybridExtensionType.HYBRID_METHOD
 
 SourceState = str | None | Iterable[str | None]
 
@@ -44,15 +37,11 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-@runtime_checkable
 class FSMCondition(Protocol):
     """Public-API shape for `conditions=` / `permissions=` callables.
 
     Each callable is invoked as `fn(instance, *args, **kwargs)` and must
-    return something truthy to allow the transition. The Protocol is
-    permissive on extra args so existing callsites pass without changes,
-    but it gives pyright something to anchor on when a non-callable is
-    passed by mistake.
+    return something truthy to allow the transition.
 
     Not parameterized against the handler's `ParamSpec`: pyright can't
     keep the handler's `P` free at the outer `transition(...)` call
@@ -161,7 +150,7 @@ class ClassBoundFsmTransition(Generic[P, R]):
 
 
 class _InstanceBoundBase(Generic[P, R]):
-    """Shared state + `__call__` for sync and async instance descriptors."""
+    """Shared state + `is_current` for sync and async instance descriptors."""
 
     __slots__ = (
         "_sa_fsm_bound_meta",
@@ -187,8 +176,14 @@ class _InstanceBoundBase(Generic[P, R]):
         self._sa_fsm_sqla_handle = sqla_handle
         self._sa_fsm_bound_meta = meta.get_bound(sqla_handle, transition_fn, ())
 
-    def __call__(self) -> bool:
-        """True if this instance is currently in the transition's target state."""
+    @property
+    def is_current(self) -> bool:
+        """True if this instance is currently in the transition's target state.
+
+        Equivalent to ``instance.state == "<target>"`` but reads the
+        target off the transition itself, so renaming a state in one
+        place doesn't drift the check site.
+        """
         bound_meta = self._sa_fsm_bound_meta
         return bound_meta.target_state == bound_meta.current_state
 
@@ -242,21 +237,12 @@ class InstanceBoundFsmTransition(_InstanceBoundBase[P, R]):
 
 class AsyncInstanceBoundFsmTransition(_InstanceBoundBase[P, R]):
     """Async sibling of `InstanceBoundFsmTransition`. Exposes `aset` /
-    `acan_proceed`, and an awaitable `__call__`.
-
-    Calling `aset` / `acan_proceed` outside a running event loop raises.
-    `__call__` is awaitable so async-first callsites stay symmetric with
-    the sync version — even though the predicate itself is a sync attribute
-    comparison, returning a coroutine keeps `await instance.publish()`
-    valid alongside `await instance.publish.aset()`.
+    `acan_proceed`. Calling `aset` / `acan_proceed` outside a running
+    event loop raises. The `.is_current` predicate is sync (a plain
+    attribute compare) on both sync and async transitions.
     """
 
     __slots__ = ()
-
-    async def __call__(self) -> bool:  # type: ignore[override]
-        """True if this instance is currently in the transition's target state."""
-        bound_meta = self._sa_fsm_bound_meta
-        return bound_meta.target_state == bound_meta.current_state
 
     @staticmethod
     def _require_running_loop() -> None:
@@ -428,7 +414,6 @@ def _make_transition(
             (),
             bound_cls,
             permissions,
-            is_async=is_async,
             custom=custom,
         )
         return transition_cls(meta, subject)
@@ -487,8 +472,9 @@ def transition(
     (`@transition class publish: ...`) fall back to `Any` because
     dispatch-by-source isn't representable in the type system.
     """
-    return _make_transition(  # type: ignore[return-value]
-        False, source, target, conditions, permissions, custom
+    return cast(
+        "_SyncTransitionDecorator",
+        _make_transition(False, source, target, conditions, permissions, custom),
     )
 
 
@@ -506,6 +492,7 @@ def async_transition(
     See `transition` for the `custom=` metadata bag and the generic
     typing model.
     """
-    return _make_transition(  # type: ignore[return-value]
-        True, source, target, conditions, permissions, custom
+    return cast(
+        "_AsyncTransitionDecorator",
+        _make_transition(True, source, target, conditions, permissions, custom),
     )

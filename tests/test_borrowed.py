@@ -382,14 +382,14 @@ class TestHandlerExposure:
         assert obj.publish.fn is HandlerExposure.publish.fn
 
     def test_get_transition_returns_descriptor(self):
-        from sqlalchemy_fsm import get_transition
+        from sqlalchemy_fsm.testing import get_transition
 
         descriptor = get_transition(HandlerExposure, "publish")
         assert descriptor.fn is HandlerExposure.publish.fn
         assert descriptor.set_fn is descriptor.fn  # back-compat alias
 
     def test_get_transition_raises_on_unknown_name(self):
-        from sqlalchemy_fsm import get_transition
+        from sqlalchemy_fsm.testing import get_transition
 
         with pytest.raises(AttributeError, match="no @transition attribute"):
             get_transition(HandlerExposure, "nope")
@@ -398,7 +398,7 @@ class TestHandlerExposure:
         # Mock the handler via the descriptor; subsequent set() calls
         # see the replacement because the bound wrapper is rebuilt on
         # every attribute access.
-        from sqlalchemy_fsm import get_transition
+        from sqlalchemy_fsm.testing import get_transition
 
         descriptor = get_transition(HandlerExposure, "publish")
         calls = []

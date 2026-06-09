@@ -12,7 +12,7 @@ which transitions are reachable from which states.
 
 ## Requirements
 
-Python 3.10+, SQLAlchemy 1.4+ (2.x supported).
+Python 3.10+, SQLAlchemy 2.0+.
 
 ## Install
 
@@ -62,7 +62,7 @@ For a transition decorated as `BlogPost.publish`:
 |---|---|
 | `BlogPost.publish()` | SQLAlchemy filter for rows in the transition's target state — use in `.filter(...)`. |
 | `BlogPost.publish.is_(True)` | Equivalent to `BlogPost.publish() == True`. |
-| `post.publish()` | `bool` — is this instance currently in the target state? |
+| `post.publish.is_current` | `bool` — is this instance currently in the target state? Equivalent to `post.state == "<target>"` but reads the target off the transition itself. |
 | `post.publish.set(*args, **kwargs)` | Execute the transition. Raises `InvalidSourceStateError` if the current state isn't allowed, or `PreconditionError` if any condition returns falsy. |
 | `post.publish.can_proceed(*args, **kwargs)` | `bool` — would `set()` succeed right now? |
 
@@ -300,10 +300,11 @@ def test_publish_sends_notification(mocker):
 and instance-bound (`post.publish.fn`) wrappers.
 
 **Replace the handler with a mock.** Reach the underlying descriptor
-via `get_transition(Model, name)` and assign `.fn`:
+via `sqlalchemy_fsm.testing.get_transition(Model, name)` and assign
+`.fn`:
 
 ```python
-from sqlalchemy_fsm import get_transition
+from sqlalchemy_fsm.testing import get_transition
 
 def test_publish_runs_through_caller(monkeypatch):
     descriptor = get_transition(BlogPost, "publish")
@@ -360,7 +361,7 @@ class AsyncDoc(Base):
 
 await doc.publish.acan_proceed(user=u)   # bool
 await doc.publish.aset(user=u)           # executes
-await doc.publish()                      # bool: is the row in 'published'?
+doc.publish.is_current                   # bool: is the row in 'published'? (sync, no await)
 ```
 
 Sync callables stay valid inside `@async_transition` — anything
@@ -458,7 +459,7 @@ SQLAlchemy instead of Django. ([django-fsm] is archived since 2024;
 
 | | sqlalchemy-fsm | django-fsm |
 |---|---|---|
-| ORM | SQLAlchemy 1.4 / 2.x | Django |
+| ORM | SQLAlchemy 2.x | Django |
 | State types | String | String, int, FK |
 | Declared state set | `FSMField["a","b","c"]` | Free-form |
 | Startup graph validation | Correctness, completeness, reachability — `SetupError` at import | None — typo'd `target=` silently assigns |

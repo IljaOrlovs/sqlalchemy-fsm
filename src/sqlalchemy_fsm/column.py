@@ -17,7 +17,7 @@ runtime.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 
 import sqlalchemy as sa
 
@@ -107,8 +107,9 @@ class FSMColumn(sa.Column):
         from different columns on the same model is fine — each transition
         only writes back to the column it was declared on.
         """
-        return self._make_decorator(  # type: ignore[return-value]
-            False, source, target, conditions, permissions, custom
+        return cast(
+            "_SyncTransitionDecorator",
+            self._make_decorator(False, source, target, conditions, permissions, custom),
         )
 
     def async_transition(
@@ -120,8 +121,9 @@ class FSMColumn(sa.Column):
         custom: Mapping[str, Any] | None = None,
     ) -> _AsyncTransitionDecorator:
         """Async sibling of `.transition`. See `sqlalchemy_fsm.async_transition`."""
-        return self._make_decorator(  # type: ignore[return-value]
-            True, source, target, conditions, permissions, custom
+        return cast(
+            "_AsyncTransitionDecorator",
+            self._make_decorator(True, source, target, conditions, permissions, custom),
         )
 
     def _make_decorator(

@@ -96,6 +96,4 @@ class BoundFSMDispatcher:
         self.before_transition = partial(
             self._cls_dispatcher.before_transition, self._ref
         )
-        self.after_transition = partial(
-            self._cls_dispatcher.after_transition, self._ref
-        )
+        self.after_transition = partial(self._cls_dispatcher.after_transition, self._ref)

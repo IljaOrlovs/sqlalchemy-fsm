@@ -1,7 +1,7 @@
 [project]
 name = "sqlalchemy-fsm"
 dynamic = ["version"]
-description = "Declarative finite state machine for SQLAlchemy models — typed, tested, drop-in for both SQLAlchemy 1.4 and 2.x."
+description = "Declarative finite state machine for SQLAlchemy 2.x models — typed, tested, async-ready."
 authors = [
     {name = "Ilja Orlovs", email = "vrghost@gmail.com"},
 ]
@@ -44,7 +44,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "SQLAlchemy>=1.4",
+    "SQLAlchemy>=2.0",
 ]
 
 [project.optional-dependencies]

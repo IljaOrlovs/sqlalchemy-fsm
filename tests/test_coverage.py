@@ -382,14 +382,14 @@ class TestFSMMetaInvalidTarget:
             FSMMeta("*", 42, (), (), _bound.BoundFSMFunction)  # type: ignore[arg-type]
 
 
-class TestFSMMetaIsAsyncInvariant:
-    def test_mismatched_is_async_rejected(self):
-        with pytest.raises(ValueError, match="is_async"):
-            FSMMeta("*", "done", (), (), _bound.BoundFSMFunction, is_async=True)
+class TestFSMMetaIsAsyncDerivation:
+    def test_sync_bound_derives_sync(self):
+        meta = FSMMeta("*", "done", (), (), _bound.BoundFSMFunction)
+        assert meta.is_async is False
 
-    def test_async_bound_with_sync_flag_rejected(self):
-        with pytest.raises(ValueError, match="is_async"):
-            FSMMeta("*", "done", (), (), _bound.AsyncBoundFSMFunction, is_async=False)
+    def test_async_bound_derives_async(self):
+        meta = FSMMeta("*", "done", (), (), _bound.AsyncBoundFSMFunction)
+        assert meta.is_async is True
 
 
 # --- sqltypes: non-string list rejected ----------------------------------

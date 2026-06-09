@@ -562,7 +562,6 @@ def inherited_bound_classes(key: tuple[type, "meta.FSMMeta"]) -> type:
                 arithmetics.joint_args(),
                 sub_meta.bound_cls,
                 arithmetics.joint_permissions(),
-                is_async=sub_meta.is_async,
             )
             out.append((merged_sub_meta, transition._sa_fsm_transition_fn))
 

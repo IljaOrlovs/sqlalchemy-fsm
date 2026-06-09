@@ -347,13 +347,14 @@ class AwaitableDoc(AsyncBase):
         pass
 
 
-async def test_async_predicate_is_awaitable():
-    """`await instance.publish()` returns the predicate result so async
-    callsites stay symmetric with the sync `instance.publish()` form."""
+async def test_async_predicate_is_sync_property():
+    """`.is_current` is a plain attribute compare — no await needed on
+    sync or async transitions, so the same predicate shape works
+    everywhere."""
     doc = AwaitableDoc()
-    assert await doc.publish() is False  # current state is "draft", not "published"
+    assert doc.publish.is_current is False  # current state is "draft"
     await doc.publish.aset()
-    assert await doc.publish() is True
+    assert doc.publish.is_current is True
 
 
 async def test_async_condition_returning_task_is_awaited():

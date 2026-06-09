@@ -39,25 +39,15 @@ class FSMMeta:
         extra_args: Iterable[Any],
         bound_cls: type,
         permissions: Iterable[Callable[..., Any]] = (),
-        is_async: bool | None = None,
         custom: Mapping[str, Any] | None = None,
     ) -> None:
-        # `is_async` is fully derivable from `bound_cls` — keep the kwarg
-        # for backwards compatibility, but treat any explicit value that
-        # disagrees with the bound class as a caller bug.
+        # `is_async` is fully derived from `bound_cls`.
         from . import bound as _bound  # local import to avoid cycle
 
-        derived_is_async = issubclass(
+        self.bound_cls = bound_cls
+        self.is_async = issubclass(
             bound_cls, (_bound.AsyncBoundFSMFunction, _bound.AsyncBoundFSMClass)
         )
-        if is_async is not None and is_async != derived_is_async:
-            raise ValueError(
-                f"is_async={is_async} but bound_cls={bound_cls.__name__} "
-                f"is {'async' if derived_is_async else 'sync'}"
-            )
-
-        self.bound_cls = bound_cls
-        self.is_async = derived_is_async
         self.conditions = tuple(conditions)
         self.permissions = tuple(permissions)
         self.extra_call_args = tuple(extra_args)

@@ -63,11 +63,11 @@ class TestAltSyntaxBlogPost:
     def test_pre_decorated_publish_from_hidden(self, model):
         model.hide.set()
         assert model.state == "hidden"
-        assert model.hide()
-        assert not model.pre_decorated_publish()
+        assert model.hide.is_current
+        assert not model.pre_decorated_publish.is_current
         model.pre_decorated_publish.set()
         assert model.state == "pre_decorated_publish"
-        assert model.pre_decorated_publish()
+        assert model.pre_decorated_publish.is_current
         assert model.side_effect == "SeparatePublishHandler::did_two"
 
     def test_post_decorated_from_hidden(self, model):

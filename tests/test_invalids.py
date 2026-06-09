@@ -20,7 +20,7 @@ class NotFsm(Base):
 
 def test_not_fsm():
     with pytest.raises(exc.SetupError) as err:
-        NotFsm().change_state()
+        NotFsm().change_state.set()
     assert "No FSMField found in model" in str(err)
 
 
@@ -42,7 +42,7 @@ class TooMuchFsm(Base):
 
 def test_too_much_fsm():
     with pytest.raises(exc.SetupError) as err:
-        TooMuchFsm().change_state()
+        TooMuchFsm().change_state.set()
     assert "2 FSMField columns" in str(err)
     assert "FSMColumn.transition" in str(err)
 

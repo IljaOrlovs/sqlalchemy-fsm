@@ -50,12 +50,12 @@ class TestFSMField:
         assert "FSMMeta" in repr(model.published._sa_fsm_meta)
 
     def test_known_transition_should_succeed(self, model):
-        assert not model.published()  # Model is not publish-ed yet
+        assert not model.published.is_current  # Model is not publish-ed yet
         assert model.published.can_proceed()
         model.published.set()
         assert model.state == "published"
         # model is publish-ed now
-        assert model.published()
+        assert model.published.is_current
 
         assert model.hidden.can_proceed()
         model.hidden.set()
@@ -148,7 +148,7 @@ class TestInvalidModel:
     def test_two_fsmfields_in_one_model_not_allowed(self):
         model = InvalidModel()
         with pytest.raises(SetupError) as err:
-            model.validated()
+            model.validated.set()
         assert "2 FSMField columns" in str(err)
         assert "FSMColumn.transition" in str(err)
 
