@@ -7,8 +7,11 @@ instances, mapped classes with custom ``__bool__``, and the structured
 fields surfaced on FSM exceptions.
 """
 
+from typing import cast
+
 import pytest
 import sqlalchemy
+from sqlalchemy import orm
 
 from sqlalchemy_fsm import FSMField, transition
 
@@ -68,16 +71,16 @@ def test_set_after_expunge_mutates_in_memory():
     is the caller's. That contract holds whether or not the row is
     currently attached to a session.
     """
-    session = sqlalchemy.orm.sessionmaker(bind=engine, expire_on_commit=False)()
+    session = orm.sessionmaker(bind=engine, expire_on_commit=False)()
     try:
         a = Article()
         session.add(a)
         session.commit()
         session.expunge_all()
 
-        assert a.state == "draft"
+        assert cast(str, a.state) == "draft"
         a.publish.set()
-        assert a.state == "published"
+        assert cast(str, a.state) == "published"
     finally:
         session.close()
 
@@ -108,7 +111,7 @@ def test_set_works_on_mapped_instance_overriding_bool():
     f = Falsy()
     assert not bool(f)
     f.publish.set()
-    assert f.state == "published"
+    assert cast(str, f.state) == "published"
 
 
 def test_exception_carries_structured_fields():
@@ -135,7 +138,7 @@ def test_set_works_across_sessions():
     doesn't consult the row's ``InstanceState`` for session membership —
     so re-attaching to a different session is fine.
     """
-    mk = sqlalchemy.orm.sessionmaker(bind=engine, expire_on_commit=False)
+    mk = orm.sessionmaker(bind=engine, expire_on_commit=False)
     s1 = mk()
     s2 = mk()
     try:
@@ -148,7 +151,7 @@ def test_set_works_across_sessions():
         a.publish.set()
         s2.commit()
 
-        assert a.state == "published"
+        assert cast(str, a.state) == "published"
     finally:
         s1.close()
         s2.close()
