@@ -1,7 +1,7 @@
 [project]
 name = "sqlalchemy-fsm"
 dynamic = ["version"]
-description = "Declarative finite state machine for SQLAlchemy models — typed, tested, drop-in for both SQLAlchemy 1.4 and 2.x."
+description = "Declarative finite state machine for SQLAlchemy 2.x models — typed, tested, async-ready."
 authors = [
     {name = "Ilja Orlovs", email = "vrghost@gmail.com"},
 ]
@@ -44,8 +44,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "SQLAlchemy>=1.4",
+    "SQLAlchemy>=2.0",
 ]
+
+[project.optional-dependencies]
+alembic = ["alembic>=1.13"]
 
 [project.urls]
 Homepage = "https://github.com/IljaOrlovs/sqlalchemy-fsm"
@@ -64,6 +67,10 @@ dev = [
     "ruff>=0.8",
     "pyright>=1.1.409",
     "hypothesis>=6.100",
+    "pytest-asyncio>=0.23",
+    "aiosqlite>=0.19",
+    "greenlet>=3.0",
+    "alembic>=1.18.4",
 ]
 
 [build-system]
@@ -120,6 +127,9 @@ ignore = ["N802", "N818"]
     "F401",
     "E402",
 ]
+# `Base` is the canonical SA declarative-base name; local Base inside test
+# helpers is idiomatic, so silence N806 there.
+"tests/*" = ["N806"]
 
 [tool.ruff.lint.isort]
 order-by-type = true
@@ -132,11 +142,15 @@ quote-style = "double"
 [tool.pyright]
 include = ["src", "tests"]
 exclude = ["**/__pycache__", ".venv", "docs"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.10"
 reportIncompatibleVariableOverride = false
 
 [tool.pytest.ini_options]
 addopts = "-v -l --color=yes --cov=sqlalchemy_fsm --cov-report=term-missing --no-cov-on-fail -m 'not benchmark'"
 testpaths = ["tests"]
+asyncio_mode = "auto"
 markers = [
     "benchmark: micro-benchmarks (deselected by default; run with `-m benchmark --benchmark-only`)",
 ]

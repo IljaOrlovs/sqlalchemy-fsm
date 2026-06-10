@@ -1,26 +1,35 @@
 """`FSMMeta` — the validated descriptor attached to every `@transition`."""
 
 import collections.abc
-from collections.abc import Callable, Iterable
+import types
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from . import util
+
+_EMPTY_CUSTOM: Mapping[str, Any] = types.MappingProxyType({})
 
 
 class FSMMeta:
     __slots__ = (
         "bound_cls",
         "conditions",
+        "custom",
         "extra_call_args",
+        "is_async",
+        "permissions",
         "sources",
         "target",
     )
 
     bound_cls: type
     conditions: tuple[Callable[..., Any], ...]
+    permissions: tuple[Callable[..., Any], ...]
     extra_call_args: tuple[Any, ...]
     sources: frozenset[str | None]
     target: str | None
+    is_async: bool
+    custom: Mapping[str, Any]
 
     def __init__(
         self,
@@ -29,10 +38,24 @@ class FSMMeta:
         conditions: Iterable[Callable[..., Any]],
         extra_args: Iterable[Any],
         bound_cls: type,
+        permissions: Iterable[Callable[..., Any]] = (),
+        custom: Mapping[str, Any] | None = None,
     ) -> None:
+        # `is_async` is fully derived from `bound_cls`.
+        from . import bound as _bound  # local import to avoid cycle
+
         self.bound_cls = bound_cls
+        self.is_async = issubclass(
+            bound_cls, (_bound.AsyncBoundFSMFunction, _bound.AsyncBoundFSMClass)
+        )
         self.conditions = tuple(conditions)
+        self.permissions = tuple(permissions)
         self.extra_call_args = tuple(extra_args)
+        # Freeze caller-supplied dict so listeners can't mutate it across
+        # invocations and leak state between transitions.
+        self.custom = (
+            _EMPTY_CUSTOM if not custom else types.MappingProxyType(dict(custom))
+        )
 
         if target is not None:
             if not util.is_valid_fsm_state(target):
@@ -67,5 +90,7 @@ class FSMMeta:
             f"sources={self.sources!r} "
             f"target={self.target!r} "
             f"conditions={self.conditions!r} "
-            f"extra call args={self.extra_call_args!r}>"
+            f"permissions={self.permissions!r} "
+            f"extra call args={self.extra_call_args!r} "
+            f"custom={dict(self.custom)!r}>"
         )

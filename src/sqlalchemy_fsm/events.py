@@ -1,3 +1,5 @@
+import weakref
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Generic, TypeVar
@@ -11,12 +13,33 @@ T = TypeVar("T")
 
 @sqlalchemy.event.dispatcher
 class FSMSchemaEvents(sqlalchemy.orm.events.InstanceEvents):
-    """SQLAlchemy event hooks fired around every FSM transition."""
+    """SQLAlchemy event hooks fired around every FSM transition.
 
-    def before_state_change(self, source: str | None, target: str | None) -> None:
+    `before_transition` / `after_transition` carry `(instance,
+    transition_name, source, target, args, kwargs)`. `instance` is
+    injected by SA's `InstanceEvents` as the first positional;
+    `transition_name`, `source`, `target`, `args`, `kwargs` are the
+    kwargs sqlalchemy-fsm sends.
+    """
+
+    def before_transition(
+        self,
+        transition_name: str,
+        source: str | None,
+        target: str | None,
+        args: tuple[Any, ...],
+        kwargs: Mapping[str, Any],
+    ) -> None:
         """Fires immediately before the transition handler runs."""
 
-    def after_state_change(self, source: str | None, target: str | None) -> None:
+    def after_transition(
+        self,
+        transition_name: str,
+        source: str | None,
+        target: str | None,
+        args: tuple[Any, ...],
+        kwargs: Mapping[str, Any],
+    ) -> None:
         """Fires after the handler and after the state field has been updated."""
 
 
@@ -30,7 +53,12 @@ class InstanceRef(Generic[T]):
         return self.target
 
 
-FSM_EVENT_DISPATCHER_CACHE: dict[type, Any] = {}
+# WeakKeyDictionary so dynamically-built model classes (test fixtures,
+# factory patterns) don't leak. Most real-world classes outlive the process
+# anyway, but the weak ref costs us nothing.
+FSM_EVENT_DISPATCHER_CACHE: "weakref.WeakKeyDictionary[type, Any]" = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def get_class_bound_dispatcher(target_cls: type) -> Any:
@@ -45,16 +73,27 @@ def get_class_bound_dispatcher(target_cls: type) -> Any:
 
 
 class BoundFSMDispatcher:
-    """Per-instance fan-out to SQLAlchemy's class-level event dispatcher."""
+    """Per-instance fan-out to SQLAlchemy's class-level event dispatcher.
+
+    Only the two FSM events (``before_transition`` / ``after_transition``)
+    are exposed. Any other attribute access raises ``AttributeError`` so
+    we don't accidentally fan out unrelated SA InstanceEvents (load,
+    refresh, expire, …) through this object.
+    """
+
+    __slots__ = (
+        "_cls_dispatcher",
+        "_ref",
+        "after_transition",
+        "before_transition",
+    )
 
     def __init__(self, instance: Any) -> None:
-        self.__ref = InstanceRef(instance)
-        self.__cls_dispatcher = get_class_bound_dispatcher(type(instance))
-        # Eagerly materialise the two FSM events so the hot path skips __getattr__.
-        for fsm_handle in ("before_state_change", "after_state_change"):
-            getattr(self, fsm_handle)
-
-    def __getattr__(self, name: str) -> Any:
-        handle = partial(getattr(self.__cls_dispatcher, name), self.__ref)
-        setattr(self, name, handle)
-        return handle
+        self._ref = InstanceRef(instance)
+        self._cls_dispatcher = get_class_bound_dispatcher(type(instance))
+        # Eagerly bind the FSM events; the hot path then hits a slot,
+        # not a descriptor lookup.
+        self.before_transition = partial(
+            self._cls_dispatcher.before_transition, self._ref
+        )
+        self.after_transition = partial(self._cls_dispatcher.after_transition, self._ref)

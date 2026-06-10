@@ -2,7 +2,7 @@ import pytest
 import sqlalchemy
 
 from sqlalchemy_fsm import FSMField, transition
-from sqlalchemy_fsm.exc import SetupError
+from sqlalchemy_fsm.exc import InvalidSourceStateError, SetupError
 
 from .conftest import Base
 
@@ -50,12 +50,12 @@ class TestFSMField:
         assert "FSMMeta" in repr(model.published._sa_fsm_meta)
 
     def test_known_transition_should_succeed(self, model):
-        assert not model.published()  # Model is not publish-ed yet
+        assert not model.published.is_current  # Model is not publish-ed yet
         assert model.published.can_proceed()
         model.published.set()
         assert model.state == "published"
         # model is publish-ed now
-        assert model.published()
+        assert model.published.is_current
 
         assert model.hidden.can_proceed()
         model.hidden.set()
@@ -63,7 +63,7 @@ class TestFSMField:
 
     def test_unknow_transition_fails(self, model):
         assert not model.hidden.can_proceed()
-        with pytest.raises(NotImplementedError) as err:
+        with pytest.raises(InvalidSourceStateError) as err:
             model.hidden.set()
         assert "Unable to switch from" in str(err)
 
@@ -103,26 +103,22 @@ class TestFSMField:
         ids = [model1.id, model2.id, model3.id, model4.id]
 
         # Check that one can query by fsm handler
-        query_results = (
-            session.query(BlogPost)
-            .filter(
+        query_results = session.scalars(
+            sqlalchemy.select(BlogPost).where(
                 BlogPost.published(),
                 BlogPost.id.in_(ids),
             )
-            .all()
-        )
+        ).all()
         assert len(query_results) == 2, query_results
         assert model3 in query_results
         assert model4 in query_results
 
-        negated_query_results = (
-            session.query(BlogPost)
-            .filter(
+        negated_query_results = session.scalars(
+            sqlalchemy.select(BlogPost).where(
                 ~BlogPost.published(),
                 BlogPost.id.in_(ids),
             )
-            .all()
-        )
+        ).all()
         assert len(negated_query_results) == 2, query_results
         assert model1 in negated_query_results
         assert model2 in negated_query_results
@@ -148,8 +144,9 @@ class TestInvalidModel:
     def test_two_fsmfields_in_one_model_not_allowed(self):
         model = InvalidModel()
         with pytest.raises(SetupError) as err:
-            model.validated()
-        assert "More than one FSMField found" in str(err)
+            model.validated.set()
+        assert "2 FSMField columns" in str(err)
+        assert "FSMColumn.transition" in str(err)
 
 
 class Document(Base):

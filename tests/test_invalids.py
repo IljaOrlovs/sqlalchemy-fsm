@@ -20,7 +20,7 @@ class NotFsm(Base):
 
 def test_not_fsm():
     with pytest.raises(exc.SetupError) as err:
-        NotFsm().change_state()
+        NotFsm().change_state.set()
     assert "No FSMField found in model" in str(err)
 
 
@@ -42,26 +42,35 @@ class TooMuchFsm(Base):
 
 def test_too_much_fsm():
     with pytest.raises(exc.SetupError) as err:
-        TooMuchFsm().change_state()
-    assert "More than one FSMField found in model" in str(err)
+        TooMuchFsm().change_state.set()
+    assert "2 FSMField columns" in str(err)
+    assert "FSMColumn.transition" in str(err)
 
 
-def test_transition_raises_on_unknown():
+def test_transition_accepts_callable_instance():
+    """A callable class instance is a valid handler (treated like a function)."""
+
     class MyCallable:
-        def __call__(*args):
-            pass
+        def __call__(self, instance):
+            instance.side_effect = "called"
 
     wrapper = transition(source="*", target="blah")
-    with pytest.raises(NotImplementedError) as err:
-        wrapper(MyCallable())
+    # Should NOT raise — callable instances are valid handlers.
+    fsm_t = wrapper(MyCallable())
+    assert fsm_t.meta.target == "blah"
 
-    assert "Do not know how to" in str(err)
+
+def test_transition_rejects_non_callable():
+    """Non-callables (ints, strings, etc.) are a setup error."""
+    wrapper = transition(source="*", target="blah")
+    with pytest.raises(exc.SetupError, match="expects a callable"):
+        wrapper(42)  # pyright: ignore[reportArgumentType, reportCallIssue]
 
 
 def test_transition_raises_on_invalid_state():
     with pytest.raises(NotImplementedError) as err:
 
-        @transition(source=42, target="blah")  # pyright: ignore[reportArgumentType]
+        @transition(source=42, target="blah")  # pyright: ignore[reportArgumentType, reportCallIssue]
         def func1():
             pass
 
@@ -69,7 +78,7 @@ def test_transition_raises_on_invalid_state():
 
     with pytest.raises(NotImplementedError) as err:
 
-        @transition(source="*", target=42)  # pyright: ignore[reportArgumentType]
+        @transition(source="*", target=42)  # pyright: ignore[reportArgumentType, reportCallIssue]
         def func2():
             pass
 
@@ -77,7 +86,7 @@ def test_transition_raises_on_invalid_state():
 
     with pytest.raises(NotImplementedError) as err:
 
-        @transition(source=["str", 42], target="blah")  # pyright: ignore[reportArgumentType]
+        @transition(source=["str", 42], target="blah")  # pyright: ignore[reportArgumentType, reportCallIssue]
         def func3():
             pass
 
@@ -145,10 +154,7 @@ class TestMisconfiguredTransitions:
         return MisconfiguredTransitions()
 
     def test_misconfigured_transitions(self, model):
-        with (
-            pytest.raises(exc.SetupError) as err,
-            pytest.warns(UserWarning, match="Failure to validate handler call args"),
-        ):
+        with pytest.raises(exc.SetupError) as err:
             model.change_state.set(42)
         assert "Mismatch between args accepted" in str(err)
 
@@ -176,10 +182,10 @@ def test_unexpected_is__type(session):
     session.add(model)
     session.commit()
     with pytest.warns(UserWarning, match="Unexpected is_ argument") as warn:
-        result = (
-            session.query(MisconfiguredTransitions)
-            .filter(MisconfiguredTransitions.change_state.is_("hello world"))
-            .all()
-        )
+        result = session.scalars(
+            sqlalchemy.select(MisconfiguredTransitions).where(
+                MisconfiguredTransitions.change_state.is_("hello world")
+            )
+        ).all()
     assert not result
     assert "Unexpected is_ argument: 'hello world'" in str(warn.list[0].message)

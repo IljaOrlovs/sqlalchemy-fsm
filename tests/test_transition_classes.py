@@ -2,6 +2,7 @@ import pytest
 import sqlalchemy
 
 from sqlalchemy_fsm import FSMField, transition
+from sqlalchemy_fsm.exc import PreconditionError
 
 from .conftest import Base
 
@@ -62,11 +63,11 @@ class TestAltSyntaxBlogPost:
     def test_pre_decorated_publish_from_hidden(self, model):
         model.hide.set()
         assert model.state == "hidden"
-        assert model.hide()
-        assert not model.pre_decorated_publish()
+        assert model.hide.is_current
+        assert not model.pre_decorated_publish.is_current
         model.pre_decorated_publish.set()
         assert model.state == "pre_decorated_publish"
-        assert model.pre_decorated_publish()
+        assert model.pre_decorated_publish.is_current
         assert model.side_effect == "SeparatePublishHandler::did_two"
 
     def test_post_decorated_from_hidden(self, model):
@@ -125,26 +126,87 @@ class TestAltSyntaxBlogPost:
             else:
                 raise NotImplementedError(query_method)
 
-            matching = (
-                session.query(AltSyntaxBlogPost)
-                .filter(
+            matching = session.scalars(
+                sqlalchemy.select(AltSyntaxBlogPost).where(
                     attr_filter[True],
                     AltSyntaxBlogPost.id.in_(all_ids),
                 )
-                .all()
-            )
+            ).all()
             assert len(matching) == len(expected_group)
             assert {el.id for el in matching} == expected_ids
 
-            not_matching = (
-                session.query(AltSyntaxBlogPost)
-                .filter(
+            not_matching = session.scalars(
+                sqlalchemy.select(AltSyntaxBlogPost).where(
                     attr_filter[False],
                     AltSyntaxBlogPost.id.in_(all_ids),
                 )
-                .all()
-            )
+            ).all()
             assert len(not_matching) == (len(all_ids) - len(expected_group))
             assert not expected_ids.intersection(el.id for el in not_matching), (
                 expected_ids.intersection(el.id for el in not_matching)
             )
+
+
+# `can_proceed()` must mirror what `set()` would actually do: a class-
+# grouped transition only fires when *one* sub-handler satisfies both
+# permissions and conditions. A bare "any-perms ∧ any-conds" check
+# over-approximates when one sub passes perms-but-not-conds and another
+# passes conds-but-not-perms, so the predicate would say True while
+# `set()` raises. The scenario below pins that mismatch.
+class _SplitChecks:
+    @transition(source="new")
+    def perms_only_handler(self, instance):
+        instance.side_effect = "perms_only"
+
+    @transition(source="new")
+    def conds_only_handler(self, instance):
+        instance.side_effect = "conds_only"
+
+
+def _truthy(*_a, **_k):
+    return True
+
+
+def _falsy(*_a, **_k):
+    return False
+
+
+# Inject split perms/conds straight onto each sub-handler's meta — that's
+# the simplest way to exercise the disjoint-pass-sets scenario without
+# adding decorator surface area.
+# Access via __dict__ to bypass FsmTransition.__get__ (which would try to
+# resolve a SqlAlchemyHandle on the non-mapped handler class).
+_SplitChecks.__dict__["perms_only_handler"].meta.permissions = (_truthy,)
+_SplitChecks.__dict__["perms_only_handler"].meta.conditions = (_falsy,)
+_SplitChecks.__dict__["conds_only_handler"].meta.permissions = (_falsy,)
+_SplitChecks.__dict__["conds_only_handler"].meta.conditions = (_truthy,)
+
+
+class SplitChecksModel(Base):
+    __tablename__ = "SplitChecksModel"
+    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+    state = sqlalchemy.Column(FSMField)
+    side_effect = sqlalchemy.Column(sqlalchemy.String)
+
+    def __init__(self, *args, **kwargs):
+        self.state = "new"
+        super().__init__(*args, **kwargs)
+
+    publish = transition(target="published")(_SplitChecks)
+
+
+def test_can_proceed_mirrors_set_for_class_transitions():
+    """`can_proceed()` agrees with `set()` when no single sub-handler
+    satisfies both permissions and conditions."""
+    m = SplitChecksModel()
+    # perms_only: perms ✓, conds ✗
+    # conds_only: perms ✗, conds ✓
+    assert m.publish.can_proceed() is False
+    # The source state matches both subs but neither passes both checks,
+    # so we expect PreconditionError (not InvalidSourceStateError) with
+    # a per-sub-handler breakdown naming each method.
+    with pytest.raises(PreconditionError) as info:
+        m.publish.set()
+    msg = str(info.value)
+    assert "perms_only_handler(permissions=True, conditions=False)" in msg
+    assert "conds_only_handler(permissions=False, conditions=True)" in msg
