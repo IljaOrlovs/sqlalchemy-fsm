@@ -182,10 +182,10 @@ def test_unexpected_is__type(session):
     session.add(model)
     session.commit()
     with pytest.warns(UserWarning, match="Unexpected is_ argument") as warn:
-        result = (
-            session.query(MisconfiguredTransitions)
-            .filter(MisconfiguredTransitions.change_state.is_("hello world"))
-            .all()
-        )
+        result = session.scalars(
+            sqlalchemy.select(MisconfiguredTransitions).where(
+                MisconfiguredTransitions.change_state.is_("hello world")
+            )
+        ).all()
     assert not result
     assert "Unexpected is_ argument: 'hello world'" in str(warn.list[0].message)

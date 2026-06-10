@@ -1,10 +1,13 @@
 import pytest
 import sqlalchemy
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 engine = sqlalchemy.create_engine("sqlite:///:memory:", echo=True)
 SessionGen = sessionmaker(bind=engine)
-Base = declarative_base()
+
+
+class Base(DeclarativeBase):
+    pass
 
 
 def pytest_sessionstart():

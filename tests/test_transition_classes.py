@@ -126,25 +126,21 @@ class TestAltSyntaxBlogPost:
             else:
                 raise NotImplementedError(query_method)
 
-            matching = (
-                session.query(AltSyntaxBlogPost)
-                .filter(
+            matching = session.scalars(
+                sqlalchemy.select(AltSyntaxBlogPost).where(
                     attr_filter[True],
                     AltSyntaxBlogPost.id.in_(all_ids),
                 )
-                .all()
-            )
+            ).all()
             assert len(matching) == len(expected_group)
             assert {el.id for el in matching} == expected_ids
 
-            not_matching = (
-                session.query(AltSyntaxBlogPost)
-                .filter(
+            not_matching = session.scalars(
+                sqlalchemy.select(AltSyntaxBlogPost).where(
                     attr_filter[False],
                     AltSyntaxBlogPost.id.in_(all_ids),
                 )
-                .all()
-            )
+            ).all()
             assert len(not_matching) == (len(all_ids) - len(expected_group))
             assert not expected_ids.intersection(el.id for el in not_matching), (
                 expected_ids.intersection(el.id for el in not_matching)

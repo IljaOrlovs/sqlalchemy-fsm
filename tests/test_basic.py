@@ -103,26 +103,22 @@ class TestFSMField:
         ids = [model1.id, model2.id, model3.id, model4.id]
 
         # Check that one can query by fsm handler
-        query_results = (
-            session.query(BlogPost)
-            .filter(
+        query_results = session.scalars(
+            sqlalchemy.select(BlogPost).where(
                 BlogPost.published(),
                 BlogPost.id.in_(ids),
             )
-            .all()
-        )
+        ).all()
         assert len(query_results) == 2, query_results
         assert model3 in query_results
         assert model4 in query_results
 
-        negated_query_results = (
-            session.query(BlogPost)
-            .filter(
+        negated_query_results = session.scalars(
+            sqlalchemy.select(BlogPost).where(
                 ~BlogPost.published(),
                 BlogPost.id.in_(ids),
             )
-            .all()
-        )
+        ).all()
         assert len(negated_query_results) == 2, query_results
         assert model1 in negated_query_results
         assert model2 in negated_query_results

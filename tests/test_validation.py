@@ -2,7 +2,7 @@
 
 import pytest
 import sqlalchemy
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import DeclarativeBase
 
 from sqlalchemy_fsm import FSMField, transition, validate_fsm
 from sqlalchemy_fsm.exc import SetupError
@@ -57,7 +57,8 @@ class TestValidateFsmCorrect:
         with_extra_target: bool = False,
         with_unknown_source: bool = False,
     ):
-        Base = declarative_base()
+        class Base(DeclarativeBase):
+            pass
 
         class M(Base):
             __tablename__ = "validate_correct"
@@ -98,7 +99,8 @@ class TestValidateFsmCorrect:
 
 class TestValidateFsmComplete:
     def test_unused_allowed_state_raises(self):
-        Base = declarative_base()
+        class Base(DeclarativeBase):
+            pass
 
         class M(Base):
             __tablename__ = "validate_complete"
@@ -119,7 +121,8 @@ class TestValidateFsmComplete:
 
 class TestValidateFsmReachable:
     def test_island_raises(self):
-        Base = declarative_base()
+        class Base(DeclarativeBase):
+            pass
 
         class M(Base):
             __tablename__ = "validate_island"
@@ -147,7 +150,8 @@ class TestValidateFsmReachable:
             validate_fsm(M)
 
     def test_wildcard_source_makes_all_states_reachable(self):
-        Base = declarative_base()
+        class Base(DeclarativeBase):
+            pass
 
         class M(Base):
             __tablename__ = "validate_wildcard"
@@ -165,7 +169,8 @@ class TestValidateFsmReachable:
         validate_fsm(M)
 
     def test_missing_default_raises(self):
-        Base = declarative_base()
+        class Base(DeclarativeBase):
+            pass
 
         class M(Base):
             __tablename__ = "validate_no_default"
@@ -180,7 +185,8 @@ class TestValidateFsmReachable:
             validate_fsm(M)
 
     def test_default_outside_declared_set_raises(self):
-        Base = declarative_base()
+        class Base(DeclarativeBase):
+            pass
 
         class M(Base):
             __tablename__ = "validate_bad_default"
@@ -202,7 +208,8 @@ class TestNoOpForPlainFsmField:
     compatibility for existing models."""
 
     def test_plain_field_skips_validation(self):
-        Base = declarative_base()
+        class Base(DeclarativeBase):
+            pass
 
         class M(Base):
             __tablename__ = "validate_plain"
@@ -222,7 +229,8 @@ class TestStartupAutoValidation:
     automatically when models are configured."""
 
     def test_bad_graph_raises_at_mapper_configuration(self):
-        Base = declarative_base()
+        class Base(DeclarativeBase):
+            pass
 
         class M(Base):
             __tablename__ = "validate_auto"

@@ -105,10 +105,14 @@ class TestFSMColumnBasic:
         session.add_all([a, b])
         session.commit()
 
-        published = session.query(BlogPost).filter(BlogPost.publish()).all()
+        published = session.scalars(
+            sqlalchemy.select(BlogPost).where(BlogPost.publish())
+        ).all()
         assert [p.state for p in published] == ["published"]
 
-        images = session.query(BlogPost).filter(BlogPost.image_ads()).all()
+        images = session.scalars(
+            sqlalchemy.select(BlogPost).where(BlogPost.image_ads())
+        ).all()
         assert [p.ad_mode for p in images] == ["images"]
 
 
@@ -165,9 +169,10 @@ class TestLegacyTransitionRaisesOnMultipleColumns:
     def test_module_level_transition_on_multi_column_model_raises(self):
         # A model with two FSM columns where a bare `@transition` is used
         # should raise `MultipleFSMColumnsError` at first `__get__`.
-        from sqlalchemy.orm import declarative_base
+        from sqlalchemy.orm import DeclarativeBase
 
-        Base2 = declarative_base()
+        class Base2(DeclarativeBase):
+            pass
 
         class TwoColModel(Base2):
             __tablename__ = "two_col_legacy"
@@ -186,9 +191,10 @@ class TestLegacyTransitionRaisesOnMultipleColumns:
 class TestValidatorPerColumn:
     def test_each_column_validated_independently(self):
         # state-graph problem on one column should mention that column.
-        from sqlalchemy.orm import declarative_base
+        from sqlalchemy.orm import DeclarativeBase
 
-        Base2 = declarative_base()
+        class Base2(DeclarativeBase):
+            pass
 
         class Broken(Base2):
             __tablename__ = "broken_multi_col"
@@ -231,7 +237,7 @@ class TestAlembicConstraintsPerColumn:
 
         constraints = render_check_constraints(BlogPost)
         names = {c.name for c in constraints}
-        table = BlogPost.__table__.name
+        table = BlogPost.__tablename__
         assert fsm_check_name(table, "state") in names
         assert fsm_check_name(table, "ad_mode") in names
         assert len(constraints) == 2

@@ -14,7 +14,7 @@ import warnings
 
 import pytest
 import sqlalchemy
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import DeclarativeBase
 
 from sqlalchemy_fsm import (
     FSMField,
@@ -342,7 +342,8 @@ class TestBoundFSMClassTargetMismatch:
 
 class TestSingleFsmColumnExceptions:
     def test_no_fsm_column(self):
-        Base2 = declarative_base()
+        class Base2(DeclarativeBase):
+            pass
 
         class _Plain(Base2):
             __tablename__ = "no_fsm_plain"
@@ -352,7 +353,8 @@ class TestSingleFsmColumnExceptions:
             _bound.single_fsm_column(_Plain)
 
     def test_multiple_fsm_columns(self):
-        Base2 = declarative_base()
+        class Base2(DeclarativeBase):
+            pass
 
         class _Many(Base2):
             __tablename__ = "many_fsm"
@@ -432,7 +434,8 @@ class TestIntrospectionEdges:
 
 class TestValidationFsmColumnHelpers:
     def test_fsm_column_returns_none_on_missing(self):
-        Base2 = declarative_base()
+        class Base2(DeclarativeBase):
+            pass
 
         class _Plain(Base2):
             __tablename__ = "validation_no_fsm"
@@ -461,7 +464,8 @@ class _Status(enum.Enum):
 
 class TestValidationEnumDefault:
     def test_enum_default_is_recognised(self):
-        Base2 = declarative_base()
+        class Base2(DeclarativeBase):
+            pass
 
         class _M(Base2):
             __tablename__ = "validation_enum_default"
@@ -481,7 +485,8 @@ class TestValidationEnumDefault:
 
 class TestValidationCallableDefault:
     def test_zero_arg_callable_default_is_recognised(self):
-        Base2 = declarative_base()
+        class Base2(DeclarativeBase):
+            pass
 
         class _M(Base2):
             __tablename__ = "validation_callable_default"
@@ -500,7 +505,8 @@ class TestValidationCallableDefault:
 
     def test_one_arg_callable_default_is_recognised(self):
         # `default=fn(ctx)` — SA does not wrap a 1-arg callable; we pass None.
-        Base2 = declarative_base()
+        class Base2(DeclarativeBase):
+            pass
 
         def with_ctx(ctx):
             return "draft"
@@ -521,7 +527,8 @@ class TestValidationCallableDefault:
         _validation.validate_fsm(_M)  # no error
 
     def test_callable_default_raising_returns_none(self):
-        Base2 = declarative_base()
+        class Base2(DeclarativeBase):
+            pass
 
         def boom():
             raise RuntimeError("nope")
@@ -543,7 +550,8 @@ class TestValidationCallableDefault:
             _validation.validate_fsm(_M)
 
     def test_callable_default_returning_non_string_returns_none(self):
-        Base2 = declarative_base()
+        class Base2(DeclarativeBase):
+            pass
 
         class _M(Base2):
             __tablename__ = "validation_nonstr_default"
@@ -562,7 +570,8 @@ class TestValidationCallableDefault:
             _validation.validate_fsm(_M)
 
     def test_unintrospectable_callable_default_returns_none(self, monkeypatch):
-        Base2 = declarative_base()
+        class Base2(DeclarativeBase):
+            pass
 
         # Provide a callable whose signature() raises.
         class _Weird:
@@ -621,7 +630,8 @@ class TestValidationListenerIdempotent:
 
 class TestAlembicHelpers:
     def test_fsm_column_name_raises_without_fsm_column(self):
-        Base2 = declarative_base()
+        class Base2(DeclarativeBase):
+            pass
 
         class _Plain(Base2):
             __tablename__ = "alembic_no_fsm"
@@ -631,7 +641,8 @@ class TestAlembicHelpers:
             _alembic_extras._fsm_column_name(_Plain)
 
     def test_resolve_classes_from_registry(self):
-        Base2 = declarative_base()
+        class Base2(DeclarativeBase):
+            pass
 
         class _M(Base2):
             __tablename__ = "alembic_resolve_registry"
@@ -641,7 +652,8 @@ class TestAlembicHelpers:
         assert _M in out
 
     def test_resolve_classes_from_iterable(self):
-        Base2 = declarative_base()
+        class Base2(DeclarativeBase):
+            pass
 
         class _M(Base2):
             __tablename__ = "alembic_resolve_iter"

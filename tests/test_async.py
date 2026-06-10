@@ -5,37 +5,32 @@ attribute on a mapped instance — so the runtime is async-safe out of
 the box. These tests pin that behaviour: state changes, persistence,
 events, conditions, and permissions all need to work end-to-end through
 an async engine.
-
-The whole module skips on SQLAlchemy 1.4 — `async_sessionmaker` was
-added in 2.0.
 """
 
 from typing import ClassVar
 
 import pytest
-
-sqlalchemy = pytest.importorskip("sqlalchemy")
-if sqlalchemy.__version__.startswith("1."):  # pragma: no cover
-    pytest.skip("AsyncSession tests require SQLAlchemy 2.x", allow_module_level=True)
-
-import pytest_asyncio  # noqa: E402
-from sqlalchemy.event import listens_for, remove  # noqa: E402
-from sqlalchemy.ext.asyncio import (  # noqa: E402
+import pytest_asyncio
+import sqlalchemy
+from sqlalchemy.event import listens_for, remove
+from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import declarative_base  # noqa: E402
+from sqlalchemy.orm import DeclarativeBase
 
-from sqlalchemy_fsm import FSMField, async_transition, transition  # noqa: E402
-from sqlalchemy_fsm.exc import (  # noqa: E402
+from sqlalchemy_fsm import FSMField, async_transition, transition
+from sqlalchemy_fsm.exc import (
     InvalidSourceStateError,
     PermissionDeniedError,
     PreconditionError,
     SetupError,
 )
 
-AsyncBase = declarative_base()
+
+class AsyncBase(DeclarativeBase):
+    pass
 
 
 def is_editor(instance, user=None, **_):
@@ -281,7 +276,7 @@ class TestAsyncTransition:
                 pass
 
         async with async_handler_session.bind.begin() as conn:
-            await conn.run_sync(_Doc.__table__.create)
+            await conn.run_sync(_Doc.__table__.create)  # type: ignore[attr-defined]
 
         doc = _Doc()
         async_handler_session.add(doc)
@@ -386,4 +381,4 @@ async def test_async_condition_returning_task_is_awaited():
     doc = _Doc()
     with pytest.raises(PreconditionError):
         await doc.publish.aset()
-    assert doc.state == "draft"
+    assert str(doc.state) == "draft"

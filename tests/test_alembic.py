@@ -9,7 +9,7 @@ from alembic.autogenerate import produce_migrations
 from alembic.migration import MigrationContext
 from alembic.operations import ops
 from sqlalchemy import CheckConstraint
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import DeclarativeBase
 
 from sqlalchemy_fsm import FSMField, transition
 from sqlalchemy_fsm.extras.alembic import (
@@ -21,7 +21,9 @@ from sqlalchemy_fsm.extras.alembic import (
     render_check_constraint,
 )
 
-AlembicBase = declarative_base()
+
+class AlembicBase(DeclarativeBase):
+    pass
 
 
 class Article(AlembicBase):
@@ -103,7 +105,9 @@ class TestRenderCheckConstraint:
         injection vector for any caller sourcing state names from outside
         the codebase). SA's compiler doubles single quotes per the SQL
         standard."""
-        Base = declarative_base()
+
+        class Base(DeclarativeBase):
+            pass
 
         class M(Base):
             __tablename__ = "quoted_state"
@@ -127,7 +131,9 @@ class TestRenderCheckConstraint:
         rather than a string, so the compiler applies dialect-specific
         identifier quoting at DDL emission time and autogen sees a stable
         rendering on both sides."""
-        Base = declarative_base()
+
+        class Base(DeclarativeBase):
+            pass
 
         class M(Base):
             __tablename__ = "reserved_word_col"
@@ -154,7 +160,9 @@ class TestRenderCheckConstraint:
 class TestAttachFsmConstraints:
     def _fresh_base(self):
         """Build an isolated Base+model so attachment is unit-testable."""
-        Base = declarative_base()
+
+        class Base(DeclarativeBase):
+            pass
 
         class M(Base):
             __tablename__ = "attach_target"
@@ -171,7 +179,7 @@ class TestAttachFsmConstraints:
         Base, model = self._fresh_base()
         attached = attach_fsm_constraints(Base)
         assert len(attached) == 1
-        names = {c.name for c in model.__table__.constraints}
+        names = {c.name for c in model.__table__.constraints}  # type: ignore[attr-defined]
         assert fsm_check_name("attach_target", "state") in names
 
     def test_skips_non_fsm_tables(self):
@@ -191,11 +199,15 @@ class TestAttachFsmConstraints:
         Base, model = self._fresh_base()
         attach_fsm_constraints(Base)
         before = sum(
-            1 for c in model.__table__.constraints if isinstance(c, CheckConstraint)
+            1
+            for c in model.__table__.constraints  # type: ignore[attr-defined]
+            if isinstance(c, CheckConstraint)
         )
         attach_fsm_constraints(Base)
         after = sum(
-            1 for c in model.__table__.constraints if isinstance(c, CheckConstraint)
+            1
+            for c in model.__table__.constraints  # type: ignore[attr-defined]
+            if isinstance(c, CheckConstraint)
         )
         assert before == after
 
@@ -215,8 +227,11 @@ class TestAutogenerateEndToEnd:
         """Returns (engine, metadata, model_class) with the comparator registered."""
         register_autogenerate_comparator()
         engine = sqlalchemy.create_engine("sqlite:///:memory:")
+
         # Use a fresh Base so other test models don't interfere.
-        Base = declarative_base()
+        class Base(DeclarativeBase):
+            pass
+
         md = Base.metadata
 
         class Doc(Base):
@@ -257,7 +272,8 @@ class TestAutogenerateEndToEnd:
         register_autogenerate_comparator()
         engine = sqlalchemy.create_engine("sqlite:///:memory:")
 
-        BaseV1 = declarative_base()
+        class BaseV1(DeclarativeBase):
+            pass
 
         class DocV1(BaseV1):
             __tablename__ = "DriftDoc"
@@ -272,7 +288,8 @@ class TestAutogenerateEndToEnd:
         BaseV1.metadata.create_all(engine)
 
         # V2: same table, extra state via a new transition.
-        BaseV2 = declarative_base()
+        class BaseV2(DeclarativeBase):
+            pass
 
         class DocV2(BaseV2):
             __tablename__ = "DriftDoc"

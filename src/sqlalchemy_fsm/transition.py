@@ -26,8 +26,6 @@ from sqlalchemy.sql.expression import false as sql_false
 from . import bound, cache, exc
 from .meta import FSMMeta
 
-HYBRID_METHOD = HybridExtensionType.HYBRID_METHOD
-
 SourceState = str | None | Iterable[str | None]
 
 #: ParamSpec for the handler's user-facing signature (everything after ``self``).
@@ -294,7 +292,7 @@ class FsmTransition(Generic[P, R], InspectionAttrInfo):
     """
 
     is_attribute = True
-    extension_type = HYBRID_METHOD
+    extension_type = HybridExtensionType.HYBRID_METHOD
     _sa_fsm_is_transition = True
 
     def __init__(
